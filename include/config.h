@@ -1,0 +1,20 @@
+
+#ifndef _CONFIG_H_
+#define _CONFIG_H_
+
+/* Client settings
+ */
+#define CLIENT_PACKET_SIZE 128 //bytes, 64 chars (41 for text)
+#define CLIENT_SEND_DELAY 2000
+#define CLIENT_HEADER_SIZE 23
+
+/* Server settings
+ */
+#define SERVER_PORT 27015
+#define SERVER_HEART_BEAT_S 2
+#define SERVER_MAX_NR_OF_CLIENTS 16
+#define SERVER_PACKET_SIZE (SERVER_MAX_NR_OF_CLIENTS*CLIENT_PACKET_SIZE)  
+#define SERVER_MAX_NR_OF_PACKETS 16
+//(SERVER_PACKET_SIZE/CLIENT_PACKET_SIZE)  
+
+#endif /* _CONFIG_H_ */

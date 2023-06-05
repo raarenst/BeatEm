@@ -9,5 +9,8 @@ BeatEm is made to secure the United Nations Universal Declaration of Human Right
 
 ```
 ##Article 12
-No one shall be subjected to arbitrary interference with his privacy, family, home or correspondence, nor to attacks upon his honour and reputation. Everyone has the right to the protection of the law against such interference or attacks.
+No one shall be subjected to arbitrary interference with his privacy, 
+family, home or correspondence, nor to attacks upon his honour and 
+reputation. Everyone has the right to the protection of the law against 
+such interference or attacks.
 ```

@@ -1,12 +1,15 @@
 # BeatEM how-to
 
 ## Server
-docker pull raarenst3/bruno_server:latest
-docker run -dp 27015:27015 raarenst3/bruno_server
-
+```
+> docker pull raarenst3/bruno_server:latest
+> docker run -dp 27015:27015 raarenst3/bruno_server
+```
 ## Clients
-bruno_client.exe 8419 13219 32111 1919 5141 [127.0.0.1]
-bruno_client.exe 4607 1919 5141 13219 32111 [127.0.0.1]
+```
+> bruno_client.exe 8419 13219 32111 1919 5141 [127.0.0.1]
+> bruno_client.exe 4607 1919 5141 13219 32111 [127.0.0.1]
+```
 
 # BeatEm background
 BeatEm is a chat system with the intention of beeing private. While many chats services can provide encrypted messages, it is still possible to map networks and who is speaking with who. Even onion routing and other attemtps can with sufficient resources be traced.

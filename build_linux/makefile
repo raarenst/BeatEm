@@ -16,12 +16,12 @@ BABEL_ARCH	:= ../babel/source/$(ARCH)
 BABEL_INCLUDE	:= ../babel/include
 
 # ----- Files -----
-EXE := $(BINDIR)/bruno_server
-EXE_CLIENT := $(BINDIR)/bruno_client
+EXE := $(BINDIR)/beatem_server
+EXE_CLIENT := $(BINDIR)/beatem_client
 
-SRC := ../source/bruno_server.c
+SRC := ../source/beatem_server.c
 SRC += ../source/crypto.c
-CLIENT_SRC := ../source/bruno_client.c
+CLIENT_SRC := ../source/beatem_client.c
 CLIENT_SRC += ../source/crypto.c
 
 BSRC := $(BABEL_ARCH)/babelsock.c

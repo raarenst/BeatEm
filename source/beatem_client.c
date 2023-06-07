@@ -8,7 +8,6 @@ Client
 
 Packet: 128 bytes encoded -> 64 characters
 Max clients: 16
-
 */
 
 #include <stdlib.h>
@@ -73,15 +72,15 @@ void *send_thread_func(void *arg) {
   uint8_t header_text[MESSAGE_LEN];
   int res;
   uint16_t *p_sb;
-  int x = 0;
+  //int x = 0;
   
   for(;;) {
     if (error_flag == 0) {
       if (send_buf_flag == 1) {
-
-	/* Put together header and message
-	 */
-	strncpy((char*)header_text, g_remote_key_str, CLIENT_HEADER_SIZE);
+      
+        /* Put together header and message
+         */
+        strncpy((char*)header_text, g_remote_key_str, CLIENT_HEADER_SIZE);
         strncpy((char*)(header_text+CLIENT_HEADER_SIZE), g_text_buffer, TEXT_LEN);
     	  //printf("\n===========> [%s]\n\n", (char*)header_text);
 	
@@ -113,9 +112,9 @@ void *send_thread_func(void *arg) {
         }
       }
     }
-    printf("=>%d ", x);
-    fflush(stdout);
-    x = x + 1;
+    //printf("=>%d ", x);
+    //fflush(stdout);
+    //x = x + 1;
     babelThreadSleep(CLIENT_SEND_DELAY);
   }
   return NULL;

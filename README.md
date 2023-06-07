@@ -7,8 +7,8 @@
 ```
 ## Clients
 ```
-> bruno_client.exe 8419 13219 32111 1919 5141 [127.0.0.1]
-> bruno_client.exe 4607 1919 5141 13219 32111 [127.0.0.1]
+> beatem_client.exe 8419 13219 32111 1919 5141 [127.0.0.1]
+> beatem_client.exe 4607 1919 5141 13219 32111 [127.0.0.1]
 ```
 
 # BeatEm background

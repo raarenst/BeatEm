@@ -361,6 +361,10 @@ function addPeer({ label, pk_hex }) {
   }
   // Dedup by pk_hex (lowercased)
   const normHex = pk_hex.trim().toLowerCase();
+  if (myPK && normHex === toHex(myPK).toLowerCase()) {
+    setPeerStatus("error", "That's your own public key — peers are for other people.");
+    return null;
+  }
   if (peers.some((p) => p.pk_hex === normHex)) {
     setPeerStatus("error", "Already added.");
     return null;
@@ -597,16 +601,24 @@ $("connect_btn").addEventListener("click", () => {
         `${heartbeatMs}ms / ${pktSize}B slots / max ${maxClients} clients · ` +
         `${textSize}B per message`;
 
-      // Hydrate peers from localStorage if any saved.
+      // Hydrate peers from localStorage if any saved. Skip any entry
+      // whose pk matches the current local identity — a saved "self
+      // peer" entry from an earlier session would otherwise reappear
+      // and clutter the list with a chat that can never receive
+      // messages (own packets are dropped by the symmetric-key check).
+      const myPkHex = toHex(myPK).toLowerCase();
       const stored = loadStoredPeers();
       peers = [];
+      let droppedSelf = 0;
       for (const s of stored) {
+        const sHex = (s.pk_hex || "").toLowerCase();
+        if (sHex === myPkHex) { droppedSelf++; continue; }
         try {
-          const bytes = fromHex(s.pk_hex);
+          const bytes = fromHex(sHex);
           if (bytes.length !== KEY_SIZE) continue;
           peers.push({
             label: s.label,
-            pk_hex: s.pk_hex,
+            pk_hex: sHex,
             pk_bytes: bytes,
             recvCount: 0,
             log: [],
@@ -614,6 +626,7 @@ $("connect_btn").addEventListener("click", () => {
           });
         } catch (_e) { /* skip bad entries */ }
       }
+      if (droppedSelf > 0) savePeers();  // persist the cleanup
       renderPeers();
       renderLog();
 

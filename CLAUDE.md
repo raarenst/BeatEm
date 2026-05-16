@@ -36,11 +36,12 @@ Server defaults: 2000 ms heartbeat, 128-byte packets, 16 clients, port 27015 (se
 
 Each client key is 64 hex chars (32 bytes). Generate keypairs out-of-band with libsodium's `crypto_box_keypair` (or use the `&genkeys` runtime command on an already-connected client and re-share the new public key manually). The client's `host[:port]` arg accepts an optional `:port` suffix to reach a server on a non-default port.
 
-**Web client** (`web/index.html`): single static page using `libsodium-wrappers` via CDN and the browser's native `WebSocket`. Serve over plain HTTP because `ws://` from a `file://` origin is unreliable:
+**Web client** (`web/index.html`): single static page using `libsodium-wrappers` via CDN and the browser's native `WebSocket`. `beatem_server` embeds this file at build time (via the makefile's `xxd -i` rule into `obj/web_index.h`) and serves it on the same TCP port as the WebSocket — `GET /` returns the page, `GET / Upgrade: websocket` upgrades. So:
 ```
-cd web && python3 -m http.server 8080
+cd build_linux && ./beatem_server
+# open http://localhost:27015/ in a browser
 ```
-Then open `http://localhost:8080/`, paste hex keys (or click *Generate new keypair*), and connect. Implements the exact same wire format as the CLI client.
+The JS picks up the WebSocket host/scheme from `location` automatically, so the same page works locally, behind a reverse proxy (Caddy), or through a tunnel (ngrok / Cloudflare Tunnel) without changes.
 
 ## Architecture
 

@@ -24,12 +24,28 @@
 
 #define WS_MAX_PAYLOAD  65535u
 
-/* Server side: consume the client's HTTP upgrade request from `sock`
- * and write back the 101 Switching Protocols response with the right
- * Sec-WebSocket-Accept. Returns 0 on success, -1 on protocol error or
- * I/O failure.
+/* Server side: handle one incoming HTTP request and dispatch it.
+ *
+ *   - If the request is a WebSocket upgrade (has Sec-WebSocket-Key and
+ *     Upgrade: websocket), the WS handshake is completed and the
+ *     function returns WS_UPGRADED. The caller should treat `sock` as
+ *     a live WebSocket connection.
+ *
+ *   - If the request is a plain GET for "/" or "/index.html", the
+ *     embedded static page (`html` / `html_len`) is sent back with a
+ *     200 response and Connection: close. The function returns
+ *     WS_HTTP_DONE; the caller should close the socket.
+ *
+ *   - Anything else: a minimal 404 is sent, return WS_HTTP_DONE.
+ *
+ *   - On protocol/I/O failure: WS_REQUEST_FAILED. Caller closes the
+ *     socket without writing further.
  */
-int ws_server_handshake(int sock);
+#define WS_UPGRADED        0
+#define WS_HTTP_DONE       1
+#define WS_REQUEST_FAILED -1
+
+int ws_serve_or_upgrade(int sock, const uint8_t *html, size_t html_len);
 
 /* Client side: send a GET upgrade request for the given host/port and
  * verify the 101 response. Returns 0 on success, -1 on failure.

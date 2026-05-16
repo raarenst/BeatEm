@@ -27,8 +27,10 @@ CLIENT_SRC += $(SRCDIR)/ws.c
 OBJ        := $(SRC:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 CLIENT_OBJ := $(CLIENT_SRC:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
+EMBEDDED_HEADER := $(OBJDIR)/web_index.h
+
 # ----- Flags -----
-CPPFLAGS := -I$(INCDIR) -MMD -MP
+CPPFLAGS := -I$(INCDIR) -I$(OBJDIR) -MMD -MP
 CFLAGS   := -Wall -pthread
 LDFLAGS  := -Llib
 LDLIBS   := -lm -lpthread -lsodium
@@ -64,11 +66,22 @@ $(EXE_CLIENT): $(CLIENT_OBJ) | $(BINDIR)
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
+# Embed web/index.html into the server binary as a C header. `xxd -i`
+# from inside web/ gives clean symbol names (index_html / index_html_len);
+# sed marks them static so any TU can safely include the header.
+$(EMBEDDED_HEADER): ../web/index.html | $(OBJDIR)
+	cd ../web && xxd -i index.html | sed 's/^unsigned /static unsigned /' > $(CURDIR)/$@
+
+# Explicit dependency: beatem_server.c #includes this generated header
+# (the gcc -MMD chain only knows about it after the first successful
+# build, so spell it out here so the first build works too).
+$(OBJDIR)/beatem_server.o: $(EMBEDDED_HEADER)
+
 $(BINDIR) $(OBJDIR):
 	mkdir -p $@
 
 clean:
-	rm -rf $(OBJDIR) \
+	rm -rf $(OBJDIR) $(EMBEDDED_HEADER) \
 	       $(EXE) $(EXE_CLIENT) $(EXE_KEYGEN) $(EXE_TEST_UNIT)
 
 -include $(OBJ:.o=.d)

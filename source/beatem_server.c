@@ -16,6 +16,13 @@
 #include "protocol.h"
 #include "ws.h"
 
+/* Generated from web/index.html by the makefile's xxd rule. Defines
+ * `unsigned char index_html[]` and `unsigned int index_html_len` so
+ * the server can serve the web client over the same TCP port as the
+ * WebSocket — no separate static file server needed.
+ */
+#include "web_index.h"
+
 /* Validation bounds — same as the client's HS_* checks, plus we
  * require packet_size to be large enough to hold one nonce + MAC +
  * sender_pk + replay counter + at least one byte of text.
@@ -134,28 +141,36 @@ int main(int argc, char **argv) {
       new_sock = accept(server_sock, NULL, NULL);
       if (new_sock < 0) {
         printf("Could not accept client: %s\n", strerror(errno));
-      } else if (ws_server_handshake(new_sock) != 0) {
-        printf("WebSocket handshake failed; closing client.\n");
-        close(new_sock);
       } else {
-        added = 0;
-        for (uint32_t idy = 0; idy < g_max_clients; idy++) {
-          if (g_client_list[idy] == 0) {
-            g_client_list[idy] = new_sock;
-            g_client_packets[idy] = 0;
-            g_nr_clients++;
-            added = 1;
-            break;
+        int disp = ws_serve_or_upgrade(new_sock, index_html, index_html_len);
+        if (disp == WS_HTTP_DONE) {
+          /* Served the static page (or a 404). Nothing else to do. */
+          close(new_sock);
+        } else if (disp != WS_UPGRADED) {
+          /* Read error / malformed request / bad handshake. */
+          close(new_sock);
+        } else {
+          /* WS upgrade succeeded. Find a slot and send the protocol
+           * handshake; otherwise refuse for capacity. */
+          added = 0;
+          for (uint32_t idy = 0; idy < g_max_clients; idy++) {
+            if (g_client_list[idy] == 0) {
+              g_client_list[idy] = new_sock;
+              g_client_packets[idy] = 0;
+              g_nr_clients++;
+              added = 1;
+              break;
+            }
           }
-        }
-        if (!added) {
-          printf("Max nr of clients (%u) reached, refusing connection.\n",
-                 g_max_clients);
-          close(new_sock);
-        } else if (send_handshake(new_sock) != 0) {
-          printf("Protocol handshake send failed; closing client.\n");
-          remove_client(new_sock);
-          close(new_sock);
+          if (!added) {
+            printf("Max nr of clients (%u) reached, refusing connection.\n",
+                   g_max_clients);
+            close(new_sock);
+          } else if (send_handshake(new_sock) != 0) {
+            printf("Protocol handshake send failed; closing client.\n");
+            remove_client(new_sock);
+            close(new_sock);
+          }
         }
       }
     }

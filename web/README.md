@@ -5,18 +5,23 @@ CLI client.
 
 ## Run
 
-The server listens on plain `ws://` (TLS would be added via a reverse
-proxy in production), so the page just needs to be loaded in a browser.
-The simplest way is to serve `index.html` over HTTP from this directory:
+`beatem_server` embeds this `index.html` at build time and serves it on
+the same TCP port as the WebSocket. So you only need one process:
 
 ```
-cd web && python3 -m http.server 8080
+cd build_linux && ./beatem_server
+# then open http://localhost:27015/ in a browser
 ```
 
-Then open `http://localhost:8080/` in a browser.
+No separate HTTP server is needed. (Re-running `make all` re-embeds
+the latest `index.html`.)
 
-Some browsers refuse `ws://` from a `file://` origin, which is why a
-local HTTP server is recommended.
+For a public-internet deployment, point a reverse proxy (Caddy / nginx)
+or a tunnel (ngrok, Cloudflare Tunnel) at port 27015 — it serves both
+the page and the WebSocket. The page's JS automatically derives the
+WebSocket scheme (`wss://` when the page was loaded over `https://`,
+`ws://` over plain `http://`) and host (same origin), so you don't
+need to edit anything to deploy.
 
 ## Use
 

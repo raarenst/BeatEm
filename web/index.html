@@ -157,8 +157,8 @@
     <input id="my_pk" type="text" placeholder="hex">
     <button id="copy_my_pk_btn" type="button" title="Copy">Copy</button>
   </div>
-  <label>Server (host:port)</label>
-  <input id="server" type="text" value="localhost:27015">
+  <label>Server (host:port) — defaults to the same host that served this page</label>
+  <input id="server" type="text">
   <div class="row" style="margin-top: 0.6rem;">
     <button id="gen_btn" type="button">Generate new keypair</button>
     <button id="connect_btn" type="button" class="primary">Connect</button>
@@ -214,6 +214,14 @@
  */
 import sodium from "https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/+esm";
 await sodium.ready;
+
+/* Default the server field to the same host that served this page, so
+ * the typical flow ("beatem_server serves both the page and the WS")
+ * works without any manual entry. The user can still override.
+ */
+const onHttp = (location.protocol === "http:" || location.protocol === "https:");
+document.getElementById("server").value = onHttp ? location.host : "localhost:27015";
+const wsScheme = (location.protocol === "https:") ? "wss" : "ws";
 
 /* ---- Protocol constants (must match include/crypto.h + protocol.h) ---- */
 const NONCE_SIZE     = 24;
@@ -567,7 +575,7 @@ $("connect_btn").addEventListener("click", () => {
     return;
   }
 
-  const url = "ws://" + $("server").value;
+  const url = wsScheme + "://" + $("server").value;
   setStatus("", `Connecting to ${url}…`);
   sock = new WebSocket(url);
   sock.binaryType = "arraybuffer";

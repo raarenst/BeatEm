@@ -212,16 +212,15 @@ static int compute_accept(const char *client_key, char *out, size_t out_max) {
     return 0;
 }
 
-int ws_server_handshake(int sock) {
-    /* Read HTTP request headers byte-by-byte until "\r\n\r\n". Doing it
-     * one byte at a time costs us a few hundred recv() syscalls during
-     * the one-shot handshake but guarantees we stop exactly at the
-     * header/body boundary, so any frame data that the client already
-     * sent is left in the kernel buffer for ws_recv_binary to pick up.
-     */
-    char buf[2048];
+/* Read HTTP request headers byte-by-byte until "\r\n\r\n". One byte at
+ * a time costs us a few hundred recv() syscalls per request but
+ * guarantees we stop exactly at the header/body boundary, so any frame
+ * data that a WebSocket client already pipelined behind the upgrade
+ * stays in the kernel buffer for ws_recv_binary to pick up.
+ */
+static int read_http_headers(int sock, char *buf, size_t buf_size) {
     size_t total = 0;
-    while (total < sizeof(buf) - 1) {
+    while (total < buf_size - 1) {
         uint8_t c;
         if (read_exact(sock, &c, 1) != 0) return -1;
         buf[total++] = (char)c;
@@ -229,13 +228,50 @@ int ws_server_handshake(int sock) {
         if (total >= 4 &&
             buf[total - 4] == '\r' && buf[total - 3] == '\n' &&
             buf[total - 2] == '\r' && buf[total - 1] == '\n') {
-            break;
+            return (int)total;
         }
     }
-    if (total >= sizeof(buf) - 1) return -1;
+    return -1;  /* headers too long */
+}
 
+/* Returns 1 if the request line targets "/" or "/index.html". We don't
+ * try to serve arbitrary files — the only static asset is the inlined
+ * web client, and a static path table keeps the attack surface tiny.
+ */
+static int request_targets_index(const char *buf) {
+    return strncmp(buf, "GET / HTTP/", 11) == 0 ||
+           strncmp(buf, "GET /index.html HTTP/", 21) == 0;
+}
+
+static int send_static_html(int sock, const uint8_t *body, size_t body_len) {
+    char head[256];
+    int n = snprintf(head, sizeof(head),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        body_len);
+    if (n < 0 || (size_t)n >= sizeof(head)) return -1;
+    if (write_exact(sock, (const uint8_t*)head, (size_t)n) != 0) return -1;
+    if (body_len > 0 && write_exact(sock, body, body_len) != 0) return -1;
+    return 0;
+}
+
+static int send_404(int sock) {
+    static const char resp[] =
+        "HTTP/1.1 404 Not Found\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "Content-Length: 9\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "Not Found";
+    return write_exact(sock, (const uint8_t*)resp, sizeof(resp) - 1);
+}
+
+static int complete_ws_upgrade(int sock, const char *headers) {
     char key[128];
-    if (!find_header(buf, "Sec-WebSocket-Key", key, sizeof(key))) return -1;
+    if (!find_header(headers, "Sec-WebSocket-Key", key, sizeof(key))) return -1;
 
     char accept[64];
     if (compute_accept(key, accept, sizeof(accept)) != 0) return -1;
@@ -251,6 +287,27 @@ int ws_server_handshake(int sock) {
     if (n < 0 || (size_t)n >= sizeof(resp)) return -1;
     if (write_exact(sock, (const uint8_t*)resp, (size_t)n) != 0) return -1;
     return 0;
+}
+
+int ws_serve_or_upgrade(int sock, const uint8_t *html, size_t html_len) {
+    char buf[2048];
+    if (read_http_headers(sock, buf, sizeof(buf)) < 0) return WS_REQUEST_FAILED;
+
+    /* WebSocket upgrade? */
+    char upgrade[64];
+    if (find_header(buf, "Upgrade", upgrade, sizeof(upgrade)) &&
+        strncasecmp(upgrade, "websocket", 9) == 0) {
+        if (complete_ws_upgrade(sock, buf) != 0) return WS_REQUEST_FAILED;
+        return WS_UPGRADED;
+    }
+
+    /* Plain GET — serve the embedded index page on "/" or "/index.html",
+     * 404 otherwise.
+     */
+    if (request_targets_index(buf)) {
+        return send_static_html(sock, html, html_len) == 0 ? WS_HTTP_DONE : WS_REQUEST_FAILED;
+    }
+    return send_404(sock) == 0 ? WS_HTTP_DONE : WS_REQUEST_FAILED;
 }
 
 int ws_client_handshake(int sock, const char *host, int port) {

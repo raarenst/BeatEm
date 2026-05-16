@@ -1,0 +1,48 @@
+
+#ifndef _PROTOCOL_H_
+#define _PROTOCOL_H_
+
+#include <stdint.h>
+
+/* Connect-time handshake (server -> client, sent immediately on accept).
+ *
+ * Wire format: 16 bytes, all multi-byte fields big-endian.
+ *
+ *   offset  size  field
+ *   ------  ----  -----
+ *     0       4   magic           "BEAT" (0x42 0x45 0x41 0x54)
+ *     4       2   version         current = 1
+ *     6       2   max_clients     server's SERVER_MAX_NR_OF_CLIENTS
+ *     8       4   heartbeat_ms    server's flush cadence (= client send cadence)
+ *    12       4   client_packet_size   bytes per client slot in the broadcast
+ *
+ * After parsing, the client derives:
+ *   server_packet_size = max_clients * client_packet_size
+ *   plain_size         = client_packet_size - 24 (nonce) - 16 (MAC)
+ *   text_size          = plain_size - 32 (sender_pk)
+ */
+
+#define PROTO_HANDSHAKE_SIZE   16
+#define PROTO_MAGIC_0          'B'
+#define PROTO_MAGIC_1          'E'
+#define PROTO_MAGIC_2          'A'
+#define PROTO_MAGIC_3          'T'
+#define PROTO_VERSION          1
+
+typedef struct {
+    uint16_t version;
+    uint16_t max_clients;
+    uint32_t heartbeat_ms;
+    uint32_t client_packet_size;
+} proto_handshake_t;
+
+/* Pack a handshake into 16 bytes. `buf` must have room for PROTO_HANDSHAKE_SIZE. */
+void proto_handshake_encode(uint8_t *buf, const proto_handshake_t *h);
+
+/* Parse 16 bytes into a handshake struct. Returns 0 on success, -1 on bad
+ * magic or version mismatch. Caller is still responsible for validating
+ * the field values (sane ranges) before allocating from them.
+ */
+int proto_handshake_decode(const uint8_t *buf, proto_handshake_t *h);
+
+#endif /* _PROTOCOL_H_ */

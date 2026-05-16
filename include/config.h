@@ -25,16 +25,16 @@
  * Random (cover) packets fail authentication and are silently discarded.
  */
 
-/* Client settings
+/* Client packet size (server's compile-time default; advertised to
+ * clients via the connect-time handshake, which sets the actual runtime
+ * value). Sodium constants are used directly by the client to size the
+ * nonce/MAC/key portions of each packet.
  */
 #define CLIENT_PACKET_SIZE   128
-#define CLIENT_SEND_DELAY    2000
 #define CLIENT_NONCE_SIZE    crypto_box_NONCEBYTES                 /* 24 */
 #define CLIENT_MAC_SIZE      crypto_box_MACBYTES                   /* 16 */
 #define CLIENT_KEY_SIZE      crypto_box_PUBLICKEYBYTES             /* 32 */
 #define CLIENT_SECRET_SIZE   crypto_box_SECRETKEYBYTES             /* 32 */
-#define CLIENT_PLAIN_SIZE    (CLIENT_PACKET_SIZE - CLIENT_NONCE_SIZE - CLIENT_MAC_SIZE) /* 88 */
-#define CLIENT_TEXT_SIZE     (CLIENT_PLAIN_SIZE - CLIENT_KEY_SIZE) /* 56 */
 
 /* Server settings
  */

@@ -25,8 +25,10 @@ EXE_CLIENT := $(BINDIR)/beatem_client.exe
 
 SRC := ../source/beatem_server.c
 SRC += ../source/crypto.c
+SRC += ../source/protocol.c
 CLIENT_SRC := ../source/beatem_client.c
 CLIENT_SRC += ../source/crypto.c
+CLIENT_SRC += ../source/protocol.c
 
 BSRC := $(BABEL_ARCH)/babelsock.c
 BSRC += $(BABEL_ARCH)/babelthread.c

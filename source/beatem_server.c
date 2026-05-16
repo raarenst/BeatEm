@@ -2,11 +2,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "config.h"
+#include "protocol.h"
 #include "babelsock.h"
 #include "babeltime.h"
 
 static int create_server();
 static int send_buffer();
+static int send_handshake(int sock);
 
 static char g_recvbuf[CLIENT_PACKET_SIZE];
 static int g_client_list[SERVER_MAX_NR_OF_CLIENTS];
@@ -93,6 +95,9 @@ int main(void) {
           new_sock = babelSockAccept(server_sock);
           if (new_sock < 0) {
             printf("Could not accept client: %d\n", new_sock);
+            babelSockClose(new_sock);
+          } else if (send_handshake(new_sock) != 0) {
+            printf("Handshake send failed; closing client.\n");
             babelSockClose(new_sock);
           } else {
             added = 0;
@@ -194,6 +199,19 @@ int send_buffer() {
     }
   }
   return 0;
+}
+
+int send_handshake(int sock) {
+  uint8_t buf[PROTO_HANDSHAKE_SIZE];
+  proto_handshake_t h = {
+    .version            = PROTO_VERSION,
+    .max_clients        = SERVER_MAX_NR_OF_CLIENTS,
+    .heartbeat_ms       = SERVER_HEART_BEAT_S * 1000,
+    .client_packet_size = CLIENT_PACKET_SIZE,
+  };
+  proto_handshake_encode(buf, &h);
+  int n = babelSockWriteAll(sock, (char*)buf, PROTO_HANDSHAKE_SIZE);
+  return (n == PROTO_HANDSHAKE_SIZE) ? 0 : -1;
 }
 
 int create_server() {

@@ -5,6 +5,16 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* Sizes corresponding to libsodium's crypto_box primitives (X25519 +
+ * XSalsa20-Poly1305). Hardcoded so this header has no libsodium
+ * dependency; the implementation in source/crypto.c verifies at compile
+ * time that these match the actual sodium constants.
+ */
+#define CLIENT_NONCE_SIZE    24  /* crypto_box_NONCEBYTES     */
+#define CLIENT_MAC_SIZE      16  /* crypto_box_MACBYTES       */
+#define CLIENT_KEY_SIZE      32  /* crypto_box_PUBLICKEYBYTES */
+#define CLIENT_SECRET_SIZE   32  /* crypto_box_SECRETKEYBYTES */
+
 /* Initialize the underlying crypto library. Call once at program start.
  * Returns 0 on success, -1 on failure.
  */

@@ -2,8 +2,20 @@
 #include <string.h>
 #include <sodium.h>
 
-#include "config.h"
 #include "crypto.h"
+
+/* Compile-time check that the hardcoded sizes in crypto.h actually match
+ * libsodium's runtime constants. If a future libsodium changes these,
+ * the build will fail loudly here instead of silently going wrong.
+ */
+_Static_assert(CLIENT_NONCE_SIZE  == crypto_box_NONCEBYTES,
+               "CLIENT_NONCE_SIZE out of sync with libsodium");
+_Static_assert(CLIENT_MAC_SIZE    == crypto_box_MACBYTES,
+               "CLIENT_MAC_SIZE out of sync with libsodium");
+_Static_assert(CLIENT_KEY_SIZE    == crypto_box_PUBLICKEYBYTES,
+               "CLIENT_KEY_SIZE out of sync with libsodium");
+_Static_assert(CLIENT_SECRET_SIZE == crypto_box_SECRETKEYBYTES,
+               "CLIENT_SECRET_SIZE out of sync with libsodium");
 
 int crypto_init(void) {
   return sodium_init() < 0 ? -1 : 0;

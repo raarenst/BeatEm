@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <pthread.h>
 #include "babelsock.h"
 #include "babelthread.h"
 #include "babeltime.h"
@@ -21,12 +22,21 @@
 #define HS_MAX_HEARTBEAT_MS 60000u
 
 int client_sock;
-char send_buf_flag;
 char error_flag;
 uint8_t g_my_public_key[CLIENT_KEY_SIZE];
 uint8_t g_my_secret_key[CLIENT_SECRET_SIZE];
 uint8_t g_remote_public_key[CLIENT_KEY_SIZE];
 char g_server_url[128];
+
+/* Pending-message handoff from main thread (stdin) to send thread.
+ * `send_buf_flag` is 1 iff `g_text_buffer` holds a message that hasn't
+ * been consumed yet. The mutex protects both; the cond var lets the
+ * main thread block (instead of polling) while a previous message is
+ * still in flight.
+ */
+static pthread_mutex_t g_send_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_send_cv  = PTHREAD_COND_INITIALIZER;
+static char            send_buf_flag;
 
 /* Negotiated at connect-time via the server's handshake.
  */
@@ -86,16 +96,28 @@ void *send_thread_func(void *arg) {
 
     for(;;) {
         if (error_flag == 0) {
-            if (send_buf_flag == 1) {
 
-                /* Plaintext layout: [sender_pk (32)][text].
-                 * Zero-pad so unused text bytes don't leak.
+            /* Stage either a real message or a cover packet under the
+             * lock, then release before doing socket I/O. This way the
+             * main thread can prepare the next message while we transmit.
+             */
+            int have_msg = 0;
+            pthread_mutex_lock(&g_send_mtx);
+            if (send_buf_flag == 1) {
+                /* Plaintext layout: [sender_pk (32)][text]. Zero-pad so
+                 * unused text bytes don't leak.
                  */
                 memset(g_send_plaintext, 0, g_plain_size);
                 memcpy(g_send_plaintext, g_my_public_key, CLIENT_KEY_SIZE);
                 memcpy(g_send_plaintext + CLIENT_KEY_SIZE,
                        g_text_buffer, g_text_size);
+                send_buf_flag = 0;
+                pthread_cond_signal(&g_send_cv);
+                have_msg = 1;
+            }
+            pthread_mutex_unlock(&g_send_mtx);
 
+            if (have_msg) {
                 int sealed = crypto_seal(g_send_buffer,
                                          g_send_plaintext, g_plain_size,
                                          g_remote_public_key,
@@ -112,14 +134,9 @@ void *send_thread_func(void *arg) {
                         error_flag = 1;
                     }
                 }
-                send_buf_flag = 0;
             } else {
-
-                /* Random cover packet. crypto_box_open_easy will fail
-                 * to authenticate this and every recipient will drop it.
-                 * Uses libsodium's CSPRNG so cover packets are statistically
-                 * indistinguishable from real ciphertext (rand() without a
-                 * seed is deterministic across runs).
+                /* Cover packet — libsodium CSPRNG bytes. Recipients
+                 * cannot distinguish these from real ciphertext.
                  */
                 crypto_random_bytes(g_send_buffer, g_client_packet_size);
                 res = babelSockWriteAll(client_sock,
@@ -334,12 +351,16 @@ int main(int argc, char *argv[]) {
             if (strcmp(user_input, "&genkeys\n") == 0) {
                 gen_keys();
             } else {
+                pthread_mutex_lock(&g_send_mtx);
+                /* Block (rather than spin) until the send thread has
+                 * consumed any previous message. */
                 while (send_buf_flag != 0) {
-                    babelThreadSleep(50);
+                    pthread_cond_wait(&g_send_cv, &g_send_mtx);
                 }
                 memset(g_text_buffer, 0, g_text_size);
                 strncpy((char*)g_text_buffer, user_input, g_text_size - 1);
                 send_buf_flag = 1;
+                pthread_mutex_unlock(&g_send_mtx);
             }
         }
     }

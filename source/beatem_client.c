@@ -319,9 +319,10 @@ static int allocate_buffers(void) {
 
 static void usage(const char *prog) {
     printf("Wrong arguments.\n\n");
-    printf("Usage: %s <my_secret_hex> <my_public_hex> <remote_public_hex> [server_ip]\n", prog);
+    printf("Usage: %s <my_secret_hex> <my_public_hex> <remote_public_hex> [host[:port]]\n", prog);
     printf("  Each key is %d hex chars (%d bytes).\n",
            CLIENT_KEY_SIZE * 2, CLIENT_KEY_SIZE);
+    printf("  Default host is 127.0.0.1; default port is %u.\n", DEFAULT_SERVER_PORT);
 }
 
 /* Open a TCP connection to host:port. Returns the connected socket fd
@@ -381,25 +382,37 @@ int main(int argc, char *argv[]) {
         printf("Invalid remote_public_hex.\n");
         return -1;
     }
+    int server_port = DEFAULT_SERVER_PORT;
     if (argc == 5) {
         strncpy(g_server_url, argv[4], sizeof(g_server_url) - 1);
         g_server_url[sizeof(g_server_url) - 1] = '\0';
     } else {
         strcpy(g_server_url, "127.0.0.1");
     }
+    /* Optional ":port" suffix lets the user reach a server that's
+     * running on a non-default port. */
+    char *colon = strrchr(g_server_url, ':');
+    if (colon) {
+        *colon = '\0';
+        server_port = atoi(colon + 1);
+        if (server_port <= 0 || server_port > 65535) {
+            printf("Invalid port in server arg.\n");
+            return -1;
+        }
+    }
 
     send_buf_flag = 0;
     error_flag = 0;
 
-    client_sock = tcp_connect(g_server_url, SERVER_PORT);
+    client_sock = tcp_connect(g_server_url, server_port);
     if (client_sock < 0) {
         printf("Could not connect to server %s:%d (%s)\n",
-               g_server_url, SERVER_PORT, strerror(errno));
+               g_server_url, server_port, strerror(errno));
         return 1;
     }
-    printf("-> Connected to server!\n");
+    printf("-> Connected to server %s:%d!\n", g_server_url, server_port);
 
-    if (ws_client_handshake(client_sock, g_server_url, SERVER_PORT) != 0) {
+    if (ws_client_handshake(client_sock, g_server_url, server_port) != 0) {
         printf("WebSocket handshake failed.\n");
         close(client_sock);
         return 1;

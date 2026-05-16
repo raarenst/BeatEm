@@ -29,9 +29,12 @@ make test-smoke   # just the smoke test (requires `make all`)
 
 **Running locally**: start the server, then run two clients with reciprocal keys:
 ```
-beatem_client <my_secret_hex> <my_public_hex> <peer_public_hex> [server_ip]
+beatem_server [--heartbeat-ms N] [--packet-size B] [--max-clients C] [--port P]
+beatem_client <my_secret_hex> <my_public_hex> <peer_public_hex> [host[:port]]
 ```
-Each key is 64 hex chars (32 bytes). Generate keypairs out-of-band with libsodium's `crypto_box_keypair` (or use the `&genkeys` runtime command on an already-connected client and re-share the new public key manually).
+Server defaults: 2000 ms heartbeat, 128-byte packets, 16 clients, port 27015 (see `include/config.h` for the `DEFAULT_*` constants, and `beatem_server --help` for ranges). All values are advertised to clients via the handshake — clients adapt automatically and need no rebuild when the server's parameters change.
+
+Each client key is 64 hex chars (32 bytes). Generate keypairs out-of-band with libsodium's `crypto_box_keypair` (or use the `&genkeys` runtime command on an already-connected client and re-share the new public key manually). The client's `host[:port]` arg accepts an optional `:port` suffix to reach a server on a non-default port.
 
 **Web client** (`web/index.html`): single static page using `libsodium-wrappers` via CDN and the browser's native `WebSocket`. Serve over plain HTTP because `ws://` from a `file://` origin is unreliable:
 ```
@@ -72,7 +75,7 @@ Connect-time handshake (16 bytes, server → client, big-endian, see `include/pr
 [ 4B "BEAT" ][ 2B version ][ 2B max_clients ][ 4B heartbeat_ms ][ 4B client_packet_size ]
 ```
 
-**3. Protocol constants** (`include/config.h`) — the server's compile-time defaults (`CLIENT_PACKET_SIZE`, `SERVER_HEART_BEAT_S`, `SERVER_MAX_NR_OF_CLIENTS`, `SERVER_PACKET_SIZE`, `SERVER_MAX_NR_OF_PACKETS`). The client no longer reads these at runtime — it derives its own sizes from the handshake. Sodium-derived constants (`CLIENT_NONCE_SIZE`, `CLIENT_MAC_SIZE`, `CLIENT_KEY_SIZE`, `CLIENT_SECRET_SIZE`) are used by both sides since they're fixed by the crypto primitive.
+**3. Protocol constants** (`include/config.h`) — only the runtime *defaults* live here (`DEFAULT_CLIENT_PACKET_SIZE`, `DEFAULT_HEARTBEAT_MS`, `DEFAULT_MAX_CLIENTS`, `DEFAULT_SERVER_PORT`). The server holds the *active* values in module-level statics and accepts CLI flags to override them at startup. All buffers (`g_recvbuf`, `g_sendbuf`, `g_client_list`, `g_client_packets`, `g_select_list`) are heap-allocated once the chosen sizes are known. Crypto-related sizes (`CLIENT_NONCE_SIZE`, `CLIENT_MAC_SIZE`, `CLIENT_KEY_SIZE`, `CLIENT_SECRET_SIZE`, `CLIENT_COUNTER_SIZE`) live in `include/crypto.h` and stay compile-time fixed since they follow the crypto primitive.
 
 **4. Transport — `source/ws.c`** — minimal RFC 6455 WebSocket framing over a connected TCP socket. Supports the HTTP upgrade (both directions, with a vendored public-domain SHA-1 for the `Sec-WebSocket-Accept` value), unmasked server→client frames, masked client→server frames, and short + u16-extended payload lengths. Plain `ws://` only; TLS belongs behind a reverse proxy.
 
@@ -80,5 +83,5 @@ Connect-time handshake (16 bytes, server → client, big-endian, see `include/pr
 
 - Keys are exchanged out-of-band — clients are started on the command line with both their own keypair (secret + public) and the remote peer's public key. There is no key exchange or directory service.
 - Recipient + sender identification is via **authenticated decryption** (`crypto_box_open_easy`), not header equality. A slot decrypts iff sealed *to* this client *by* the configured peer. Self-echoes (own packets reflected back by the server's broadcast) are dropped via the embedded sender-pk check.
-- The **server** still uses fixed stack/global arrays sized by `config.h` constants; nothing is dynamically allocated on the server.
+- The **server** heap-allocates its buffers from the runtime-configured `--packet-size` × `--max-clients` once flags are parsed. There are no fixed arrays of protocol data — the static-array convention only applies to per-iteration scratch on the stack.
 - The **client** dynamically allocates its packet buffers, plaintext scratch, and stdin input buffer from the handshake-negotiated sizes (`g_text_buffer`, `g_send_buffer`, `g_send_plaintext`, `g_recv_buffer`, `g_recv_plaintext`). This is the intentional exception to the "fixed arrays" style — it's what lets a client built today still work against a server whose `CLIENT_PACKET_SIZE` is bumped tomorrow.

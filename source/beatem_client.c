@@ -39,6 +39,13 @@ static pthread_mutex_t g_send_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_send_cv  = PTHREAD_COND_INITIALIZER;
 static char            send_buf_flag;
 
+/* Keys can be regenerated at runtime via `&genkeys`. Both the send and
+ * receive threads read them every iteration, so all access goes through
+ * this mutex. Each thread snapshots into stack-local buffers at the top
+ * of its loop to keep the critical section short.
+ */
+static pthread_mutex_t g_keys_mtx = PTHREAD_MUTEX_INITIALIZER;
+
 /* Replay-protection counters.
  *   g_send_counter — strictly monotonic, written into the plaintext of
  *     each REAL outgoing packet. Initialized from wall-clock time at the
@@ -92,7 +99,9 @@ static void print_welcome(void) {
 }
 
 static void gen_keys(void) {
+    pthread_mutex_lock(&g_keys_mtx);
     crypto_keygen(g_my_public_key, g_my_secret_key);
+    pthread_mutex_unlock(&g_keys_mtx);
 
     char my_pub_hex[HEX_KEY_LEN];
     char my_sec_hex[HEX_SECRET_LEN];
@@ -107,69 +116,82 @@ void *send_thread_func(void *arg) {
     (void)arg;
     int res;
 
-    for(;;) {
-        if (error_flag == 0) {
+    /* Exit the thread as soon as either side reports an error. Prevents
+     * the busy-loop and the false "still sending" output that an
+     * unconditional `for(;;)` would produce on a broken socket.
+     */
+    while (error_flag == 0) {
 
-            /* Stage either a real message or a cover packet under the
-             * lock, then release before doing socket I/O. This way the
-             * main thread can prepare the next message while we transmit.
+        /* Snapshot the keypair so a concurrent &genkeys can't change
+         * mid-seal. Receive thread does the same.
+         */
+        uint8_t my_pk[CLIENT_KEY_SIZE];
+        uint8_t my_sk[CLIENT_SECRET_SIZE];
+        pthread_mutex_lock(&g_keys_mtx);
+        memcpy(my_pk, g_my_public_key, CLIENT_KEY_SIZE);
+        memcpy(my_sk, g_my_secret_key, CLIENT_SECRET_SIZE);
+        pthread_mutex_unlock(&g_keys_mtx);
+
+        /* Stage either a real message or a cover packet under the
+         * send lock, then release before doing socket I/O. This way
+         * the main thread can prepare the next message while we
+         * transmit.
+         */
+        int have_msg = 0;
+        pthread_mutex_lock(&g_send_mtx);
+        if (send_buf_flag == 1) {
+            /* Plaintext layout: [sender_pk (32)][counter (4 BE)][text].
+             * Zero-pad so unused text bytes don't leak.
+             *
+             * Counter is monotonically increasing, clamped to current
+             * wall-clock time so it survives client restarts. The
+             * recipient drops anything <= its highest seen value.
              */
-            int have_msg = 0;
-            pthread_mutex_lock(&g_send_mtx);
-            if (send_buf_flag == 1) {
-                /* Plaintext layout: [sender_pk (32)][counter (4 BE)][text].
-                 * Zero-pad so unused text bytes don't leak.
-                 *
-                 * Counter is monotonically increasing, clamped to current
-                 * wall-clock time so it survives client restarts. The
-                 * recipient drops anything <= its highest seen value.
-                 */
-                uint32_t now = (uint32_t)time(NULL);
-                g_send_counter = (now > g_send_counter) ? now : g_send_counter + 1;
+            uint32_t now = (uint32_t)time(NULL);
+            g_send_counter = (now > g_send_counter) ? now : g_send_counter + 1;
 
-                memset(g_send_plaintext, 0, g_plain_size);
-                memcpy(g_send_plaintext, g_my_public_key, CLIENT_KEY_SIZE);
-                g_send_plaintext[CLIENT_KEY_SIZE + 0] = (uint8_t)(g_send_counter >> 24);
-                g_send_plaintext[CLIENT_KEY_SIZE + 1] = (uint8_t)(g_send_counter >> 16);
-                g_send_plaintext[CLIENT_KEY_SIZE + 2] = (uint8_t)(g_send_counter >>  8);
-                g_send_plaintext[CLIENT_KEY_SIZE + 3] = (uint8_t)(g_send_counter      );
-                memcpy(g_send_plaintext + CLIENT_KEY_SIZE + CLIENT_COUNTER_SIZE,
-                       g_text_buffer, g_text_size);
-                send_buf_flag = 0;
-                pthread_cond_signal(&g_send_cv);
-                have_msg = 1;
-            }
-            pthread_mutex_unlock(&g_send_mtx);
+            memset(g_send_plaintext, 0, g_plain_size);
+            memcpy(g_send_plaintext, my_pk, CLIENT_KEY_SIZE);
+            g_send_plaintext[CLIENT_KEY_SIZE + 0] = (uint8_t)(g_send_counter >> 24);
+            g_send_plaintext[CLIENT_KEY_SIZE + 1] = (uint8_t)(g_send_counter >> 16);
+            g_send_plaintext[CLIENT_KEY_SIZE + 2] = (uint8_t)(g_send_counter >>  8);
+            g_send_plaintext[CLIENT_KEY_SIZE + 3] = (uint8_t)(g_send_counter      );
+            memcpy(g_send_plaintext + CLIENT_KEY_SIZE + CLIENT_COUNTER_SIZE,
+                   g_text_buffer, g_text_size);
+            send_buf_flag = 0;
+            pthread_cond_signal(&g_send_cv);
+            have_msg = 1;
+        }
+        pthread_mutex_unlock(&g_send_mtx);
 
-            if (have_msg) {
-                int sealed = crypto_seal(g_send_buffer,
-                                         g_send_plaintext, g_plain_size,
-                                         g_remote_public_key,
-                                         g_my_secret_key);
-                if ((size_t)sealed != g_client_packet_size) {
-                    printf("Crypto seal error: %d\n", sealed);
-                    error_flag = 1;
-                } else {
-                    res = babelSockWriteAll(client_sock,
-                                            (char*)g_send_buffer,
-                                            g_client_packet_size);
-                    if ((size_t)res != g_client_packet_size) {
-                        printf("Client write error: %d\n", res);
-                        error_flag = 1;
-                    }
-                }
+        if (have_msg) {
+            int sealed = crypto_seal(g_send_buffer,
+                                     g_send_plaintext, g_plain_size,
+                                     g_remote_public_key,
+                                     my_sk);
+            if ((size_t)sealed != g_client_packet_size) {
+                printf("Crypto seal error: %d\n", sealed);
+                error_flag = 1;
             } else {
-                /* Cover packet — libsodium CSPRNG bytes. Recipients
-                 * cannot distinguish these from real ciphertext.
-                 */
-                crypto_random_bytes(g_send_buffer, g_client_packet_size);
                 res = babelSockWriteAll(client_sock,
                                         (char*)g_send_buffer,
                                         g_client_packet_size);
                 if ((size_t)res != g_client_packet_size) {
-                    printf("Client write rnd buffer error: %d\n", res);
+                    printf("Client write error: %d\n", res);
                     error_flag = 1;
                 }
+            }
+        } else {
+            /* Cover packet — libsodium CSPRNG bytes. Recipients
+             * cannot distinguish these from real ciphertext.
+             */
+            crypto_random_bytes(g_send_buffer, g_client_packet_size);
+            res = babelSockWriteAll(client_sock,
+                                    (char*)g_send_buffer,
+                                    g_client_packet_size);
+            if ((size_t)res != g_client_packet_size) {
+                printf("Client write rnd buffer error: %d\n", res);
+                error_flag = 1;
             }
         }
         babelThreadSleep(g_heartbeat_ms);
@@ -181,53 +203,65 @@ void *receive_thread_func(void *arg) {
     (void)arg;
     int res;
 
-    for(;;) {
-        if (error_flag == 0) {
-            res = babelSockReadAll(client_sock,
-                                   (char*)g_recv_buffer,
-                                   g_server_packet_size);
-            if ((size_t)res != g_server_packet_size) {
-                printf("Client read error: %d\n", res);
-                error_flag = 1;
+    /* Exit on error instead of spinning. The previous shape `for(;;) {
+     * if (error_flag == 0) ... }` with no sleep at the end would burn
+     * 100% CPU once a read failed.
+     */
+    while (error_flag == 0) {
+        res = babelSockReadAll(client_sock,
+                               (char*)g_recv_buffer,
+                               g_server_packet_size);
+        if ((size_t)res != g_server_packet_size) {
+            printf("Client read error: %d\n", res);
+            error_flag = 1;
+            break;
+        }
+
+        /* Snapshot keys once per broadcast so all 16 slot-decrypt
+         * attempts see a consistent pair, even if &genkeys fires.
+         */
+        uint8_t my_pk[CLIENT_KEY_SIZE];
+        uint8_t my_sk[CLIENT_SECRET_SIZE];
+        pthread_mutex_lock(&g_keys_mtx);
+        memcpy(my_pk, g_my_public_key, CLIENT_KEY_SIZE);
+        memcpy(my_sk, g_my_secret_key, CLIENT_SECRET_SIZE);
+        pthread_mutex_unlock(&g_keys_mtx);
+
+        for (size_t i = 0; i < g_max_clients; i++) {
+            const uint8_t *slot = g_recv_buffer + g_client_packet_size * i;
+            int pt_len = crypto_open(g_recv_plaintext,
+                                     slot, g_client_packet_size,
+                                     g_remote_public_key,
+                                     my_sk);
+            if ((size_t)pt_len != g_plain_size) {
                 continue;
             }
-
-            for (size_t i = 0; i < g_max_clients; i++) {
-                const uint8_t *slot = g_recv_buffer + g_client_packet_size * i;
-                int pt_len = crypto_open(g_recv_plaintext,
-                                         slot, g_client_packet_size,
-                                         g_remote_public_key,
-                                         g_my_secret_key);
-                if ((size_t)pt_len != g_plain_size) {
-                    continue;
-                }
-                /* Echo of our own outgoing packet — drop it.
-                 * crypto_box's shared secret is symmetric in the keypair,
-                 * so our own slots decrypt successfully too.
-                 */
-                if (memcmp(g_recv_plaintext, g_my_public_key, CLIENT_KEY_SIZE) == 0) {
-                    continue;
-                }
-                /* Replay-protection check. Parse the embedded counter
-                 * (big-endian uint32 after the sender_pk) and require
-                 * strict-greater than the last counter we accepted.
-                 * Rejects replays of captured packets and any reorderings.
-                 */
-                uint8_t *cbytes = g_recv_plaintext + CLIENT_KEY_SIZE;
-                uint32_t pkt_counter = ((uint32_t)cbytes[0] << 24) |
-                                       ((uint32_t)cbytes[1] << 16) |
-                                       ((uint32_t)cbytes[2] <<  8) |
-                                        (uint32_t)cbytes[3];
-                if (pkt_counter <= g_recv_counter) {
-                    continue;
-                }
-                g_recv_counter = pkt_counter;
-
-                uint8_t *text = g_recv_plaintext + CLIENT_KEY_SIZE + CLIENT_COUNTER_SIZE;
-                text[g_text_size - 1] = '\0';
-                printf("\n         ---(%s)---\n>>", (char*)text);
-                fflush(stdout);
+            /* Echo of our own outgoing packet — drop it.
+             * crypto_box's shared secret is symmetric in the keypair,
+             * so our own slots decrypt successfully too.
+             */
+            if (memcmp(g_recv_plaintext, my_pk, CLIENT_KEY_SIZE) == 0) {
+                continue;
             }
+            /* Replay-protection check. Parse the embedded counter
+             * (big-endian uint32 after the sender_pk) and require
+             * strict-greater than the last counter we accepted.
+             * Rejects replays of captured packets and any reorderings.
+             */
+            uint8_t *cbytes = g_recv_plaintext + CLIENT_KEY_SIZE;
+            uint32_t pkt_counter = ((uint32_t)cbytes[0] << 24) |
+                                   ((uint32_t)cbytes[1] << 16) |
+                                   ((uint32_t)cbytes[2] <<  8) |
+                                    (uint32_t)cbytes[3];
+            if (pkt_counter <= g_recv_counter) {
+                continue;
+            }
+            g_recv_counter = pkt_counter;
+
+            uint8_t *text = g_recv_plaintext + CLIENT_KEY_SIZE + CLIENT_COUNTER_SIZE;
+            text[g_text_size - 1] = '\0';
+            printf("\n         ---(%s)---\n>>", (char*)text);
+            fflush(stdout);
         }
         /* No sleep here: babelSockReadAll already blocks for a full
          * broadcast, so a sleep just lets the TCP buffer accumulate

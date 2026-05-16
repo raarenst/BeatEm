@@ -19,7 +19,7 @@
  * After parsing, the client derives:
  *   server_packet_size = max_clients * client_packet_size
  *   plain_size         = client_packet_size - 24 (nonce) - 16 (MAC)
- *   text_size          = plain_size - 32 (sender_pk)
+ *   text_size          = plain_size - 32 (sender_pk) - 4 (replay counter)
  */
 
 #define PROTO_HANDSHAKE_SIZE   16

@@ -72,9 +72,14 @@ int main(void) {
      */
     res = babelSockSelect(select_list, select_count, SERVER_HEART_BEAT_S * 1000);
 
-    /* Time to send, send the buffer before receiving more
+    /* Time to send, send the buffer before receiving more.
+     * `>=` not `>`: with seconds-precision time, `>` would require
+     * `now >= start + heartbeat + 1` and stretch the actual cadence
+     * to heartbeat+1 seconds — which would mismatch what the server
+     * advertises to clients in the handshake and weaken the
+     * constant-cadence privacy property.
      */
-    if (babelTimeGetCurrentTime() > (start_time_s + SERVER_HEART_BEAT_S)) {
+    if (babelTimeGetCurrentTime() >= (start_time_s + SERVER_HEART_BEAT_S)) {
       send_buffer();
       g_nr_packets = 0;
       start_time_s = babelTimeGetCurrentTime();

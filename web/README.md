@@ -1,7 +1,8 @@
 # BeatEm web client
 
 Static HTML + libsodium.js. Speaks the same WebSocket protocol as the
-CLI client.
+CLI client. Also configured as a **Progressive Web App** (PWA) so you
+can install it to a phone home screen and launch it like a native app.
 
 ## Run
 
@@ -51,3 +52,34 @@ Each peer entry shows a short **fingerprint** (first 8 hex chars of
 their public key). Read these to each other over voice to verify you
 have the right key — this is the same idea as Signal's "safety
 numbers" or SSH's host-key fingerprint.
+
+## Install as a PWA (mobile)
+
+Open the page in mobile Safari or Chrome and use the browser's
+*"Add to Home Screen"* / *"Install app"* option. An icon appears on
+the home screen; tapping it opens BeatEm fullscreen without browser
+chrome.
+
+**Honest limitation:** the privacy property requires the client to
+emit a packet every heartbeat regardless of whether you're typing. Mobile
+OSes aggressively suspend backgrounded apps, so as soon as you lock
+the screen or switch apps, cover-traffic emission stops and you stop
+receiving new messages. You re-open the icon to resume — this is
+closer to *"open a chat session"* than *"always-on messenger"*.
+
+We do not register for push notifications: push would tell Apple/Google
+that you just received a BeatEm message, which is exactly the metadata
+the protocol exists to hide.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `index.html`           | the whole UI (HTML + CSS + JS inline) |
+| `manifest.json`        | PWA install metadata (name, icons, theme) |
+| `sw.js`                | service worker — caches assets for offline launch |
+| `icon-192.png`, `icon-512.png`, `apple-touch-icon.png` | app icons |
+
+All of these are embedded into `beatem_server` at build time via
+`xxd -i` (see `build_linux/makefile`), so a single binary serves the
+PWA over the same TCP port as the WebSocket.

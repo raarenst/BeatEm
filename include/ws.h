@@ -31,10 +31,9 @@
  *     function returns WS_UPGRADED. The caller should treat `sock` as
  *     a live WebSocket connection.
  *
- *   - If the request is a plain GET for "/" or "/index.html", the
- *     embedded static page (`html` / `html_len`) is sent back with a
- *     200 response and Connection: close. The function returns
- *     WS_HTTP_DONE; the caller should close the socket.
+ *   - If the request is a plain GET for a path matched by the
+ *     `assets` table, the corresponding body is sent back with a 200
+ *     response and Connection: close. Returns WS_HTTP_DONE.
  *
  *   - Anything else: a minimal 404 is sent, return WS_HTTP_DONE.
  *
@@ -45,7 +44,14 @@
 #define WS_HTTP_DONE       1
 #define WS_REQUEST_FAILED -1
 
-int ws_serve_or_upgrade(int sock, const uint8_t *html, size_t html_len);
+typedef struct {
+    const char    *path;
+    const char    *content_type;
+    const uint8_t *body;
+    size_t         body_len;
+} ws_static_t;
+
+int ws_serve_or_upgrade(int sock, const ws_static_t *assets, size_t n_assets);
 
 /* Client side: send a GET upgrade request for the given host/port and
  * verify the 101 response. Returns 0 on success, -1 on failure.

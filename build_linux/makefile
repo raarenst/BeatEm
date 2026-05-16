@@ -27,7 +27,12 @@ CLIENT_SRC += $(SRCDIR)/ws.c
 OBJ        := $(SRC:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 CLIENT_OBJ := $(CLIENT_SRC:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
-EMBEDDED_HEADER := $(OBJDIR)/web_index.h
+# Files in web/ that get embedded into beatem_server. Each yields a
+# header obj/<name>.h whose `xxd -i` symbol matches the filename with
+# dots/dashes turned into underscores (e.g. icon-192.png -> icon_192_png).
+EMBED_FILES   := index.html manifest.json sw.js \
+                 icon-192.png icon-512.png apple-touch-icon.png
+EMBED_HEADERS := $(EMBED_FILES:%=$(OBJDIR)/%.h)
 
 # ----- Flags -----
 CPPFLAGS := -I$(INCDIR) -I$(OBJDIR) -MMD -MP
@@ -66,22 +71,23 @@ $(EXE_CLIENT): $(CLIENT_OBJ) | $(BINDIR)
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-# Embed web/index.html into the server binary as a C header. `xxd -i`
-# from inside web/ gives clean symbol names (index_html / index_html_len);
-# sed marks them static so any TU can safely include the header.
-$(EMBEDDED_HEADER): ../web/index.html | $(OBJDIR)
-	cd ../web && xxd -i index.html | sed 's/^unsigned /static unsigned /' > $(CURDIR)/$@
+# Embed each file in web/ as a C header. `xxd -i` from inside web/
+# gives clean symbol names (index_html / icon_192_png / ...); sed marks
+# them static so any TU can safely include the header.
+$(OBJDIR)/%.h: ../web/% | $(OBJDIR)
+	cd ../web && xxd -i $* | sed -e 's/^unsigned /static unsigned /' \
+	                            -e '/_len = /d' > $(CURDIR)/$@
 
-# Explicit dependency: beatem_server.c #includes this generated header
-# (the gcc -MMD chain only knows about it after the first successful
-# build, so spell it out here so the first build works too).
-$(OBJDIR)/beatem_server.o: $(EMBEDDED_HEADER)
+# Explicit dependency: beatem_server.c #includes the generated headers
+# (the gcc -MMD chain only knows about them after the first successful
+# build, so spell them out here so the first build works too).
+$(OBJDIR)/beatem_server.o: $(EMBED_HEADERS)
 
 $(BINDIR) $(OBJDIR):
 	mkdir -p $@
 
 clean:
-	rm -rf $(OBJDIR) $(EMBEDDED_HEADER) \
+	rm -rf $(OBJDIR) $(EMBED_HEADERS) \
 	       $(EXE) $(EXE_CLIENT) $(EXE_KEYGEN) $(EXE_TEST_UNIT)
 
 -include $(OBJ:.o=.d)

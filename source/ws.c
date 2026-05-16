@@ -234,24 +234,36 @@ static int read_http_headers(int sock, char *buf, size_t buf_size) {
     return -1;  /* headers too long */
 }
 
-/* Returns 1 if the request line targets "/" or "/index.html". We don't
- * try to serve arbitrary files — the only static asset is the inlined
- * web client, and a static path table keeps the attack surface tiny.
+/* Extract the request-URI from a "GET <path> HTTP/..." line and strip
+ * any query string. Returns 0 on success, -1 on a malformed request.
  */
-static int request_targets_index(const char *buf) {
-    return strncmp(buf, "GET / HTTP/", 11) == 0 ||
-           strncmp(buf, "GET /index.html HTTP/", 21) == 0;
+static int extract_request_path(const char *headers, char *path, size_t max) {
+    if (strncmp(headers, "GET ", 4) != 0) return -1;
+    const char *start = headers + 4;
+    const char *end   = strchr(start, ' ');
+    if (!end) return -1;
+
+    /* drop ?query if present so "/foo?bar=baz" matches "/foo" */
+    const char *q = memchr(start, '?', end - start);
+    if (q) end = q;
+
+    size_t len = (size_t)(end - start);
+    if (len == 0 || len >= max) return -1;
+    memcpy(path, start, len);
+    path[len] = '\0';
+    return 0;
 }
 
-static int send_static_html(int sock, const uint8_t *body, size_t body_len) {
+static int send_static(int sock, const char *content_type,
+                       const uint8_t *body, size_t body_len) {
     char head[256];
     int n = snprintf(head, sizeof(head),
         "HTTP/1.1 200 OK\r\n"
-        "Content-Type: text/html; charset=utf-8\r\n"
+        "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
         "Connection: close\r\n"
         "\r\n",
-        body_len);
+        content_type, body_len);
     if (n < 0 || (size_t)n >= sizeof(head)) return -1;
     if (write_exact(sock, (const uint8_t*)head, (size_t)n) != 0) return -1;
     if (body_len > 0 && write_exact(sock, body, body_len) != 0) return -1;
@@ -289,7 +301,7 @@ static int complete_ws_upgrade(int sock, const char *headers) {
     return 0;
 }
 
-int ws_serve_or_upgrade(int sock, const uint8_t *html, size_t html_len) {
+int ws_serve_or_upgrade(int sock, const ws_static_t *assets, size_t n_assets) {
     char buf[2048];
     if (read_http_headers(sock, buf, sizeof(buf)) < 0) return WS_REQUEST_FAILED;
 
@@ -301,11 +313,16 @@ int ws_serve_or_upgrade(int sock, const uint8_t *html, size_t html_len) {
         return WS_UPGRADED;
     }
 
-    /* Plain GET — serve the embedded index page on "/" or "/index.html",
-     * 404 otherwise.
-     */
-    if (request_targets_index(buf)) {
-        return send_static_html(sock, html, html_len) == 0 ? WS_HTTP_DONE : WS_REQUEST_FAILED;
+    /* Plain GET — look up the request path in the asset table. */
+    char path[256];
+    if (extract_request_path(buf, path, sizeof(path)) == 0) {
+        for (size_t i = 0; i < n_assets; i++) {
+            if (strcmp(path, assets[i].path) == 0) {
+                return send_static(sock, assets[i].content_type,
+                                   assets[i].body, assets[i].body_len) == 0
+                    ? WS_HTTP_DONE : WS_REQUEST_FAILED;
+            }
+        }
     }
     return send_404(sock) == 0 ? WS_HTTP_DONE : WS_REQUEST_FAILED;
 }

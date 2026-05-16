@@ -2,7 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>BeatEm Web Client</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon"             type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="icon"             type="image/png" sizes="512x512" href="/icon-512.png">
+<link rel="apple-touch-icon"                  sizes="180x180" href="/apple-touch-icon.png">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -214,6 +223,17 @@
  */
 import sodium from "https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/+esm";
 await sodium.ready;
+
+/* Register the service worker so the page can be "installed" as a PWA
+ * (Add to Home Screen on iOS, install prompt on Android Chrome). The
+ * worker also lets the UI load instantly when offline — although the
+ * actual chat obviously requires the WebSocket back to the server.
+ */
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch((e) => {
+    console.warn("service worker registration failed:", e);
+  });
+}
 
 /* Default the server field to the same host that served this page, so
  * the typical flow ("beatem_server serves both the page and the WS")

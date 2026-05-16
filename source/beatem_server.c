@@ -16,12 +16,35 @@
 #include "protocol.h"
 #include "ws.h"
 
-/* Generated from web/index.html by the makefile's xxd rule. Defines
- * `unsigned char index_html[]` and `unsigned int index_html_len` so
- * the server can serve the web client over the same TCP port as the
+/* Generated from files in web/ by the makefile's xxd rules. Each
+ * header defines a `static unsigned char <name>[]` array; we use
+ * sizeof() at the call site instead of the matching <name>_len
+ * (which sed strips, since it would also trigger an unused-variable
+ * warning). The server serves these on the same TCP port as the
  * WebSocket — no separate static file server needed.
  */
-#include "web_index.h"
+#include "index.html.h"
+#include "manifest.json.h"
+#include "sw.js.h"
+#include "icon-192.png.h"
+#include "icon-512.png.h"
+#include "apple-touch-icon.png.h"
+
+/* sizeof(array) is a compile-time constant; the xxd-generated *_len
+ * symbols aren't, so use sizeof here to keep this static-initializable.
+ */
+#define ASSET(path, type, name) { (path), (type), (name), sizeof(name) }
+
+static const ws_static_t g_assets[] = {
+    ASSET("/",                     "text/html; charset=utf-8",  index_html),
+    ASSET("/index.html",           "text/html; charset=utf-8",  index_html),
+    ASSET("/manifest.json",        "application/manifest+json", manifest_json),
+    ASSET("/sw.js",                "text/javascript",           sw_js),
+    ASSET("/icon-192.png",         "image/png",                 icon_192_png),
+    ASSET("/icon-512.png",         "image/png",                 icon_512_png),
+    ASSET("/apple-touch-icon.png", "image/png",                 apple_touch_icon_png),
+};
+static const size_t g_n_assets = sizeof(g_assets) / sizeof(g_assets[0]);
 
 /* Validation bounds — same as the client's HS_* checks, plus we
  * require packet_size to be large enough to hold one nonce + MAC +
@@ -142,7 +165,7 @@ int main(int argc, char **argv) {
       if (new_sock < 0) {
         printf("Could not accept client: %s\n", strerror(errno));
       } else {
-        int disp = ws_serve_or_upgrade(new_sock, index_html, index_html_len);
+        int disp = ws_serve_or_upgrade(new_sock, g_assets, g_n_assets);
         if (disp == WS_HTTP_DONE) {
           /* Served the static page (or a 404). Nothing else to do. */
           close(new_sock);

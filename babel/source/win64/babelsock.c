@@ -517,10 +517,13 @@ babelSockSelect(int *babelSockReadList,
     { 
         tv_p = NULL;
     } 
-    else 
+    else
     {
-        tv.tv_sec = 0;
-        tv.tv_usec = timeOut;
+        /* timeOut is in milliseconds. tv_usec must be < 1,000,000, so
+         * split into seconds and remaining microseconds.
+         */
+        tv.tv_sec = timeOut / 1000;
+        tv.tv_usec = (timeOut % 1000) * 1000;
         tv_p = &tv;
     }
     maxVal = maxV(&babelSockReadList[0], lengthReadList);  

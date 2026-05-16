@@ -44,4 +44,11 @@ int crypto_open(uint8_t *out,
 void crypto_key_to_hex(char *hex, const uint8_t *key, size_t key_len);
 int  crypto_hex_to_key(uint8_t *key, size_t key_len, const char *hex);
 
+/* Fill `buf` with `len` cryptographically random bytes. Used for cover
+ * (padding) packets so they're statistically indistinguishable from real
+ * crypto_box ciphertext. Replaces rand() — which without seeding is
+ * deterministic across runs.
+ */
+void crypto_random_bytes(uint8_t *buf, size_t len);
+
 #endif /* _CRYPTO_H_ */

@@ -117,10 +117,11 @@ void *send_thread_func(void *arg) {
 
                 /* Random cover packet. crypto_box_open_easy will fail
                  * to authenticate this and every recipient will drop it.
+                 * Uses libsodium's CSPRNG so cover packets are statistically
+                 * indistinguishable from real ciphertext (rand() without a
+                 * seed is deterministic across runs).
                  */
-                for (size_t idx = 0; idx < g_client_packet_size; idx++) {
-                    g_send_buffer[idx] = (uint8_t)(rand() & 0xFF);
-                }
+                crypto_random_bytes(g_send_buffer, g_client_packet_size);
                 res = babelSockWriteAll(client_sock,
                                         (char*)g_send_buffer,
                                         g_client_packet_size);
@@ -173,7 +174,10 @@ void *receive_thread_func(void *arg) {
                 fflush(stdout);
             }
         }
-        babelThreadSleep(g_heartbeat_ms);
+        /* No sleep here: babelSockReadAll already blocks for a full
+         * broadcast, so a sleep just lets the TCP buffer accumulate
+         * stale broadcasts and adds latency to real messages.
+         */
     }
     return NULL;
 }

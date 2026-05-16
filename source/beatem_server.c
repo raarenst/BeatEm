@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "config.h"
+#include "crypto.h"
 #include "protocol.h"
 #include "babelsock.h"
 #include "babeltime.h"
@@ -27,7 +28,12 @@ int main(void) {
   int x = 0;
 
   g_nr_packets = 0;
-    
+
+  if (crypto_init() != 0) {
+    printf("*** ERROR: Could not initialize crypto library.\n");
+    return -1;
+  }
+
   /* Setup the server
    */
   server_sock = create_server();
@@ -168,19 +174,14 @@ int send_buffer() {
   int res;
 
   printf("### Sending buffer! g_nr_clients:%d g_nr_packets:%d\n", g_nr_clients, g_nr_packets);
-  
-  /* Fill remaining buffer with rnd
+
+  /* Fill remaining buffer with cryptographic randomness so unused slots
+   * are statistically indistinguishable from real crypto_box ciphertext.
+   * Previously used rand() seeded from time(NULL) which is predictable.
    */
-  srand((unsigned int)babelTimeGetCurrentTime());
-  startbuf = g_nr_packets*CLIENT_PACKET_SIZE;
-  printf("startbuf: %d PACKET_SIZE:%d SERVER_PACKET_SIZE:%d Buffer:[",
-	 startbuf,
-	 CLIENT_PACKET_SIZE,
-	 SERVER_PACKET_SIZE);
-  for (int idx=startbuf; idx < SERVER_PACKET_SIZE; idx++) {
-    g_sendbuf[idx] = (char)rand() % 255; // Use rand and hash
-  }
-  printf("]\n");
+  startbuf = g_nr_packets * CLIENT_PACKET_SIZE;
+  crypto_random_bytes((uint8_t*)g_sendbuf + startbuf,
+                      SERVER_PACKET_SIZE - startbuf);
   
   /* Send whole buffer to all clients
    */

@@ -48,6 +48,10 @@ void crypto_key_to_hex(char *hex, const uint8_t *key, size_t key_len) {
   sodium_bin2hex(hex, key_len * 2 + 1, key, key_len);
 }
 
+void crypto_random_bytes(uint8_t *buf, size_t len) {
+  randombytes_buf(buf, len);
+}
+
 int crypto_hex_to_key(uint8_t *key, size_t key_len, const char *hex) {
   size_t bin_len = 0;
   if (sodium_hex2bin(key, key_len, hex, strlen(hex),

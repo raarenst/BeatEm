@@ -38,7 +38,7 @@ Three layers, top-down:
 - `beatem_client.c` — three concurrent flows:
   - **Main thread**: connects, reads the server handshake, validates and allocates buffers from the negotiated sizes, then runs an stdin loop. `&genkeys` regenerates an X25519 keypair (and prints both halves; peer must be re-told). Any other line is queued via `send_buf_flag`.
   - **Send thread** (`send_thread_func`): every `g_heartbeat_ms` (from handshake) emits exactly one `g_client_packet_size`-byte packet — either the queued message sealed with `crypto_box_easy(plain, nonce, recipient_pk, sender_sk)`, or pure random bytes if no message is queued. **The constant cadence is the privacy property** — never short-circuit it.
-  - **Receive thread** (`receive_thread_func`): blocks on a full `g_server_packet_size` broadcast, then tries `crypto_box_open_easy` on each of the `g_max_clients` slots with the configured peer's public key and the local secret key. Successful authentication means the slot was sealed *to* this client *by* the expected peer. The decrypted plaintext also embeds the sender's public key (first 32 bytes) — if it equals this client's own pk, the slot is an echo of our own outgoing packet and is silently dropped (see [memory: project-crypto-box-symmetric-key]). Otherwise the remaining `g_text_size` bytes of text are printed.
+  - **Receive thread** (`receive_thread_func`): blocks on a full `g_server_packet_size` broadcast, then tries `crypto_box_open_easy` on each of the `g_max_clients` slots with the configured peer's public key and the local secret key. Successful authentication means the slot was sealed *to* this client *by* the expected peer. The decrypted plaintext embeds the sender's public key (first 32 bytes) — if it equals this client's own pk, the slot is an echo of our own outgoing packet and is silently dropped (see [memory: project-crypto-box-symmetric-key]). The next 4 bytes are the sender's monotonic counter; packets with counter ≤ the highest already accepted are dropped as replays. Otherwise the remaining `g_text_size` bytes of text are printed.
 - `crypto.c` / `include/crypto.h` — thin libsodium wrapper: `crypto_init`, `crypto_keygen`, `crypto_seal`, `crypto_open`, plus `crypto_key_to_hex` / `crypto_hex_to_key` helpers. All real crypto lives in libsodium.
 - `protocol.c` / `include/protocol.h` — connect-time handshake codec. Pack/unpack a 16-byte struct over the wire so server and client agree on cadence and slot sizes without sharing compile-time constants.
 
@@ -48,8 +48,12 @@ Per client packet (size negotiated; default 128 bytes):
 ```
 [ 24-byte nonce ][ 16-byte Poly1305 MAC ][ ciphertext ]
                                           ↓ decrypts to
-                          [ 32-byte sender_pk ][ text ]
+              [ 32-byte sender_pk ][ 4-byte counter ][ text ]
 ```
+The 4-byte big-endian counter is monotonic per sender (initialized from
+wall-clock seconds so it survives restarts). Recipients reject any
+packet whose counter is `<=` the highest they've already accepted from
+that peer — replay protection without server cooperation.
 
 Connect-time handshake (16 bytes, server → client, big-endian, see `include/protocol.h`):
 ```

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <pthread.h>
 #include "babelsock.h"
 #include "babelthread.h"
@@ -37,6 +38,18 @@ char g_server_url[128];
 static pthread_mutex_t g_send_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_send_cv  = PTHREAD_COND_INITIALIZER;
 static char            send_buf_flag;
+
+/* Replay-protection counters.
+ *   g_send_counter — strictly monotonic, written into the plaintext of
+ *     each REAL outgoing packet. Initialized from wall-clock time at the
+ *     first send so it survives client restarts (peer's tracker will
+ *     accept the higher value).
+ *   g_recv_counter — highest counter we've ever accepted from our
+ *     configured peer. New packets must carry counter > this value or
+ *     they're dropped as replays / out-of-order. 0 = nothing seen yet.
+ */
+static uint32_t g_send_counter = 0;
+static uint32_t g_recv_counter = 0;
 
 /* Negotiated at connect-time via the server's handshake.
  */
@@ -104,12 +117,23 @@ void *send_thread_func(void *arg) {
             int have_msg = 0;
             pthread_mutex_lock(&g_send_mtx);
             if (send_buf_flag == 1) {
-                /* Plaintext layout: [sender_pk (32)][text]. Zero-pad so
-                 * unused text bytes don't leak.
+                /* Plaintext layout: [sender_pk (32)][counter (4 BE)][text].
+                 * Zero-pad so unused text bytes don't leak.
+                 *
+                 * Counter is monotonically increasing, clamped to current
+                 * wall-clock time so it survives client restarts. The
+                 * recipient drops anything <= its highest seen value.
                  */
+                uint32_t now = (uint32_t)time(NULL);
+                g_send_counter = (now > g_send_counter) ? now : g_send_counter + 1;
+
                 memset(g_send_plaintext, 0, g_plain_size);
                 memcpy(g_send_plaintext, g_my_public_key, CLIENT_KEY_SIZE);
-                memcpy(g_send_plaintext + CLIENT_KEY_SIZE,
+                g_send_plaintext[CLIENT_KEY_SIZE + 0] = (uint8_t)(g_send_counter >> 24);
+                g_send_plaintext[CLIENT_KEY_SIZE + 1] = (uint8_t)(g_send_counter >> 16);
+                g_send_plaintext[CLIENT_KEY_SIZE + 2] = (uint8_t)(g_send_counter >>  8);
+                g_send_plaintext[CLIENT_KEY_SIZE + 3] = (uint8_t)(g_send_counter      );
+                memcpy(g_send_plaintext + CLIENT_KEY_SIZE + CLIENT_COUNTER_SIZE,
                        g_text_buffer, g_text_size);
                 send_buf_flag = 0;
                 pthread_cond_signal(&g_send_cv);
@@ -184,8 +208,22 @@ void *receive_thread_func(void *arg) {
                 if (memcmp(g_recv_plaintext, g_my_public_key, CLIENT_KEY_SIZE) == 0) {
                     continue;
                 }
-                /* Real message from the configured remote peer. */
-                uint8_t *text = g_recv_plaintext + CLIENT_KEY_SIZE;
+                /* Replay-protection check. Parse the embedded counter
+                 * (big-endian uint32 after the sender_pk) and require
+                 * strict-greater than the last counter we accepted.
+                 * Rejects replays of captured packets and any reorderings.
+                 */
+                uint8_t *cbytes = g_recv_plaintext + CLIENT_KEY_SIZE;
+                uint32_t pkt_counter = ((uint32_t)cbytes[0] << 24) |
+                                       ((uint32_t)cbytes[1] << 16) |
+                                       ((uint32_t)cbytes[2] <<  8) |
+                                        (uint32_t)cbytes[3];
+                if (pkt_counter <= g_recv_counter) {
+                    continue;
+                }
+                g_recv_counter = pkt_counter;
+
+                uint8_t *text = g_recv_plaintext + CLIENT_KEY_SIZE + CLIENT_COUNTER_SIZE;
                 text[g_text_size - 1] = '\0';
                 printf("\n         ---(%s)---\n>>", (char*)text);
                 fflush(stdout);
@@ -313,7 +351,7 @@ int main(int argc, char *argv[]) {
     g_client_packet_size = h.client_packet_size;
     g_server_packet_size = g_max_clients * g_client_packet_size;
     g_plain_size         = g_client_packet_size - CLIENT_NONCE_SIZE - CLIENT_MAC_SIZE;
-    g_text_size          = g_plain_size - CLIENT_KEY_SIZE;
+    g_text_size          = g_plain_size - CLIENT_KEY_SIZE - CLIENT_COUNTER_SIZE;
     printf("-> Handshake received (v=%u).\n", h.version);
 
     if (allocate_buffers() != 0) {

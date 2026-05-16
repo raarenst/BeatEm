@@ -15,6 +15,13 @@
 #define CLIENT_KEY_SIZE      32  /* crypto_box_PUBLICKEYBYTES */
 #define CLIENT_SECRET_SIZE   32  /* crypto_box_SECRETKEYBYTES */
 
+/* Replay-protection counter, embedded inside the encrypted plaintext
+ * right after the sender's public key. Big-endian uint32. Sender keeps
+ * a monotonic counter (initialized from wall-clock time so it survives
+ * reboots), receiver rejects anything <= its highest seen value.
+ */
+#define CLIENT_COUNTER_SIZE  4
+
 /* Initialize the underlying crypto library. Call once at program start.
  * Returns 0 on success, -1 on failure.
  */

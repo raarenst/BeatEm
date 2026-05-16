@@ -1,14 +1,3 @@
-/*
-
-Client
-======
-#define CLIENT_PACKET_SIZE 128 //bytes, 64 chars (41 for text)
-#define CLIENT_SEND_DELAY 4000
-#define CLIENT_HEADER_SIZE 23
-
-Packet: 128 bytes encoded -> 64 characters
-Max clients: 16
-*/
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,151 +8,152 @@ Max clients: 16
 #include "crypto.h"
 #include "config.h"
 
-/* An encrypted character is unit16_t thus two bytes.
- */
-#define MESSAGE_LEN (CLIENT_PACKET_SIZE/2)
-#define TEXT_LEN (MESSAGE_LEN - CLIENT_HEADER_SIZE)
+#define HEX_KEY_LEN (CLIENT_KEY_SIZE * 2 + 1)
+#define HEX_SECRET_LEN (CLIENT_SECRET_SIZE * 2 + 1)
 
 int client_sock;
 char send_buf_flag;
 char error_flag;
-char g_text_buffer[MESSAGE_LEN];
-uint16_t g_my_private_key_d = 8419; // 4607
-uint16_t g_my_public_key_e = 13219; // 1919
-uint16_t g_my_key_n = 32111;        // 5141
-uint16_t g_remote_public_key;
-uint16_t g_remote_n;
-char g_my_key_str[CLIENT_HEADER_SIZE];
-char g_remote_key_str[CLIENT_HEADER_SIZE];
+char g_text_buffer[CLIENT_TEXT_SIZE];
+uint8_t g_my_public_key[CLIENT_KEY_SIZE];
+uint8_t g_my_secret_key[CLIENT_SECRET_SIZE];
+uint8_t g_remote_public_key[CLIENT_KEY_SIZE];
 char g_server_url[128];
 
-void get_key_str(char *buf, uint16_t public_key, uint16_t key_n) {
+static void print_welcome(void) {
+    char my_pub_hex[HEX_KEY_LEN];
+    char remote_pub_hex[HEX_KEY_LEN];
+    crypto_key_to_hex(my_pub_hex, g_my_public_key, CLIENT_KEY_SIZE);
+    crypto_key_to_hex(remote_pub_hex, g_remote_public_key, CLIENT_KEY_SIZE);
 
-  /* 23 chars total
-   */
-  sprintf(buf, "$%10d:%10d$", public_key, key_n);
-}
-
-void print_welcome() {
     printf("==========================================\n");
-    printf("           BRUNO CHAT CLIENT\n");
+    printf("           BEATEM CHAT CLIENT\n");
     printf("          For your eyes only!\n");
     printf("==========================================\n");
-    printf("My private key (d): %d\n", g_my_private_key_d);
-    printf("My public key (e):  %d\n", g_my_public_key_e);
-    printf("My n:               %d\n", g_my_key_n);
-    printf("Remote public key:  %d\n", g_remote_public_key);
-    printf("Remote n:           %d\n", g_remote_n);
+    printf("My public key:     %s\n", my_pub_hex);
+    printf("Remote public key: %s\n", remote_pub_hex);
     printf("------------------------------------------\n");
     printf("Commands:\n");
-    printf("  &genkeys to regenerate keys.\n");
-    printf("------------------------------------------\n");	
+    printf("  &genkeys to regenerate keys (you must re-share new public key out-of-band).\n");
+    printf("------------------------------------------\n");
 }
 
-void gen_keys() {
-  rsa_key_gen(&g_my_public_key_e, &g_my_private_key_d, &g_my_key_n);
-  get_key_str(g_my_key_str, g_my_public_key_e, g_my_key_n);
-  print_welcome();
+static void gen_keys(void) {
+    crypto_keygen(g_my_public_key, g_my_secret_key);
+
+    char my_pub_hex[HEX_KEY_LEN];
+    char my_sec_hex[HEX_SECRET_LEN];
+    crypto_key_to_hex(my_pub_hex, g_my_public_key, CLIENT_KEY_SIZE);
+    crypto_key_to_hex(my_sec_hex, g_my_secret_key, CLIENT_SECRET_SIZE);
+    printf("\nNew keypair generated.\n");
+    printf("  Secret key (keep private): %s\n", my_sec_hex);
+    printf("  Public key (share):        %s\n\n", my_pub_hex);
 }
 
 void *send_thread_func(void *arg) {
+    (void)arg;
+    uint8_t send_buffer[CLIENT_PACKET_SIZE];
+    uint8_t plaintext[CLIENT_PLAIN_SIZE];
+    int res;
 
-  char send_buffer[CLIENT_PACKET_SIZE]; // Encrypted
-  uint8_t header_text[MESSAGE_LEN];
-  int res;
-  uint16_t *p_sb;
-  //int x = 0;
-  
-  for(;;) {
-    if (error_flag == 0) {
-      if (send_buf_flag == 1) {
-      
-        /* Put together header and message
-         */
-        strncpy((char*)header_text, g_remote_key_str, CLIENT_HEADER_SIZE);
-        strncpy((char*)(header_text+CLIENT_HEADER_SIZE), g_text_buffer, TEXT_LEN);
-    	  //printf("\n===========> [%s]\n\n", (char*)header_text);
-	
-        /* Encode message
-	       */
-        p_sb = (uint16_t*)send_buffer;
-        rsa_encrypt(header_text, p_sb, MESSAGE_LEN, g_remote_public_key, g_remote_n);
-	
-        /* Send buffer ready to be sent
-         */
-        res = babelSockWriteAll(client_sock, send_buffer, CLIENT_PACKET_SIZE);
-        if (res != CLIENT_PACKET_SIZE) {
-          printf("Client write error: %d\n", res);
-	        error_flag = 1;
-        }
-        send_buf_flag = 0;
-      } else {
+    for(;;) {
+        if (error_flag == 0) {
+            if (send_buf_flag == 1) {
 
-        /* Generate random buffer
-         */
-        srand(babelTimeGetCurrentTime());
-        for (int idx=0; idx < CLIENT_PACKET_SIZE; idx++) {
-          send_buffer[idx] = (char)rand() % 255;
+                /* Plaintext layout: [sender_pk (32)][text (56)].
+                 * Zero-pad so unused text bytes don't leak.
+                 */
+                memset(plaintext, 0, CLIENT_PLAIN_SIZE);
+                memcpy(plaintext, g_my_public_key, CLIENT_KEY_SIZE);
+                memcpy(plaintext + CLIENT_KEY_SIZE, g_text_buffer, CLIENT_TEXT_SIZE);
+
+                int sealed = crypto_seal(send_buffer,
+                                         plaintext, CLIENT_PLAIN_SIZE,
+                                         g_remote_public_key,
+                                         g_my_secret_key);
+                if (sealed != CLIENT_PACKET_SIZE) {
+                    printf("Crypto seal error: %d\n", sealed);
+                    error_flag = 1;
+                } else {
+                    res = babelSockWriteAll(client_sock,
+                                            (char*)send_buffer,
+                                            CLIENT_PACKET_SIZE);
+                    if (res != CLIENT_PACKET_SIZE) {
+                        printf("Client write error: %d\n", res);
+                        error_flag = 1;
+                    }
+                }
+                send_buf_flag = 0;
+            } else {
+
+                /* Random cover packet. crypto_box_open_easy will fail
+                 * to authenticate this and every recipient will drop it.
+                 */
+                for (int idx = 0; idx < CLIENT_PACKET_SIZE; idx++) {
+                    send_buffer[idx] = (uint8_t)(rand() & 0xFF);
+                }
+                res = babelSockWriteAll(client_sock,
+                                        (char*)send_buffer,
+                                        CLIENT_PACKET_SIZE);
+                if (res != CLIENT_PACKET_SIZE) {
+                    printf("Client write rnd buffer error: %d\n", res);
+                    error_flag = 1;
+                }
+            }
         }
-        res = babelSockWriteAll(client_sock, send_buffer, CLIENT_PACKET_SIZE);
-        if (res != CLIENT_PACKET_SIZE) {
-          printf("Client write rnd buffer error: %d\n", res);
-	        error_flag = 1;
-        }
-      }
+        babelThreadSleep(CLIENT_SEND_DELAY);
     }
-    //printf("=>%d ", x);
-    //fflush(stdout);
-    //x = x + 1;
-    babelThreadSleep(CLIENT_SEND_DELAY);
-  }
-  return NULL;
+    return NULL;
 }
 
 void *receive_thread_func(void *arg) {
+    (void)arg;
+    uint8_t recvbuf[SERVER_PACKET_SIZE];
+    uint8_t plaintext[CLIENT_PLAIN_SIZE];
+    int res;
 
-  int res;
-  char recvbuf[SERVER_PACKET_SIZE]; 
-  uint8_t d[CLIENT_PACKET_SIZE];    
-  uint16_t *p;
-  uint8_t *m;
-  int len;
-  
-  for(;;) {
+    for(;;) {
+        if (error_flag == 0) {
+            res = babelSockReadAll(client_sock, (char*)recvbuf, SERVER_PACKET_SIZE);
+            if (res != SERVER_PACKET_SIZE) {
+                printf("Client read error: %d\n", res);
+                error_flag = 1;
+                continue;
+            }
 
-    if (error_flag == 0) {
-
-      /* Receive server package
-       */
-      res =  babelSockReadAll(client_sock, recvbuf, SERVER_PACKET_SIZE);
-      if (res != SERVER_PACKET_SIZE) {
-        printf("Client read error: %d\n", res);
-	      error_flag = 1;
-        continue;
-      }
-      
-      /* Decrypt each package and check for signature
-       * If signature found, print message
-       */
-      for (int i=0; i < SERVER_MAX_NR_OF_PACKETS; i++) {
-
-        p = (uint16_t*)(recvbuf + CLIENT_PACKET_SIZE*i);
-        rsa_decrypt(d, p, CLIENT_PACKET_SIZE, g_my_private_key_d, g_my_key_n);
-
-	      /* Check if it is for this client
-	       */
-        if (strncmp((char*)d, g_my_key_str, CLIENT_HEADER_SIZE) == 0) {
-	        m = d + CLIENT_HEADER_SIZE;
-	        len = strlen((char*)m);
-	        m[len-1] = '\0';
-	        printf("\n         ---(%s)---\n>>", m);
-          fflush(stdout); 
+            for (int i = 0; i < SERVER_MAX_NR_OF_PACKETS; i++) {
+                const uint8_t *slot = recvbuf + CLIENT_PACKET_SIZE * i;
+                int pt_len = crypto_open(plaintext,
+                                         slot, CLIENT_PACKET_SIZE,
+                                         g_remote_public_key,
+                                         g_my_secret_key);
+                if (pt_len != CLIENT_PLAIN_SIZE) {
+                    continue;
+                }
+                /* Echo of our own outgoing packet — drop it.
+                 * crypto_box's shared secret is symmetric in the keypair,
+                 * so our own slots decrypt successfully too.
+                 */
+                if (memcmp(plaintext, g_my_public_key, CLIENT_KEY_SIZE) == 0) {
+                    continue;
+                }
+                /* Real message from the configured remote peer. */
+                uint8_t *text = plaintext + CLIENT_KEY_SIZE;
+                text[CLIENT_TEXT_SIZE - 1] = '\0';
+                printf("\n         ---(%s)---\n>>", (char*)text);
+                fflush(stdout);
+            }
         }
-      }
+        babelThreadSleep(2000);
     }
-    babelThreadSleep(2000); // FIXME
-  }
-  return NULL;
+    return NULL;
+}
+
+static void usage(const char *prog) {
+    printf("Wrong arguments.\n\n");
+    printf("Usage: %s <my_secret_hex> <my_public_hex> <remote_public_hex> [server_ip]\n", prog);
+    printf("  Each key is %d hex chars (%d bytes).\n",
+           CLIENT_KEY_SIZE * 2, CLIENT_KEY_SIZE);
 }
 
 int main(int argc, char *argv[]) {
@@ -171,45 +161,43 @@ int main(int argc, char *argv[]) {
     int data;
     BabelThread_t *send_thread;
     BabelThread_t *receive_thread;
-    char user_input[MESSAGE_LEN];
+    char user_input[CLIENT_TEXT_SIZE];
 
-    /* Parse arguments
-     */
-    if ((argc == 6) || (argc == 7)) {
-      g_my_private_key_d = atoi(argv[1]); 
-      g_my_public_key_e = atoi(argv[2]); 
-      g_my_key_n = atoi(argv[3]);  
-      g_remote_public_key = atoi(argv[4]);  
-      g_remote_n  = atoi(argv[5]);    
-    } else {
-      printf("Wrong number of input arguments.\n\n");
-      printf("Usage: bruno_client.exe my_private_key "
-	     "my_public_key my_n remote_public_key remote_n server_URL\n");
-      return -1;
+    if (crypto_init() != 0) {
+        printf("Could not initialize crypto library.\n");
+        return 1;
     }
 
-    if (argc == 7) {
-      strcpy(g_server_url, argv[6]);
-    } else {
-      strcpy(g_server_url, "127.0.0.1");
+    if (argc != 4 && argc != 5) {
+        usage(argv[0]);
+        return -1;
     }
-    
-    /* Initialize
-     */
+
+    if (crypto_hex_to_key(g_my_secret_key, CLIENT_SECRET_SIZE, argv[1]) != 0) {
+        printf("Invalid my_secret_hex.\n");
+        return -1;
+    }
+    if (crypto_hex_to_key(g_my_public_key, CLIENT_KEY_SIZE, argv[2]) != 0) {
+        printf("Invalid my_public_hex.\n");
+        return -1;
+    }
+    if (crypto_hex_to_key(g_remote_public_key, CLIENT_KEY_SIZE, argv[3]) != 0) {
+        printf("Invalid remote_public_hex.\n");
+        return -1;
+    }
+
+    if (argc == 5) {
+        strncpy(g_server_url, argv[4], sizeof(g_server_url) - 1);
+        g_server_url[sizeof(g_server_url) - 1] = '\0';
+    } else {
+        strcpy(g_server_url, "127.0.0.1");
+    }
+
     send_buf_flag = 0;
     error_flag = 0;
 
-    /* Setup headers
-     */
-    get_key_str(g_my_key_str, g_my_public_key_e, g_my_key_n);
-    get_key_str(g_remote_key_str, g_remote_public_key, g_remote_n);
-    
-    /* Generate RSA keys
-     */
     print_welcome();
-    
-    /* Connect to server
-     */
+
     res = babelSockInit();
     if (res != BABELSOCK_OK) {
         printf("Could not initialize babelsock: %d\n", res);
@@ -217,7 +205,7 @@ int main(int argc, char *argv[]) {
     }
     client_sock = babelSock(BABELSOCK_TCP);
     if (client_sock < 0) {
-        printf("Could not create server socket: %d\n", client_sock);
+        printf("Could not create client socket: %d\n", client_sock);
         return 1;
     }
     res = babelSockConnect(client_sock, g_server_url, SERVER_PORT);
@@ -226,45 +214,40 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("-> Connected to server!\n");
-    
-    /* Create and start threads
-     */
+
     babelThreadInit();
     send_thread = babelThreadCreate(send_thread_func,
-		  &data,
-                  BABELTHREAD_PRIOHINT_LOW);
+                                    &data,
+                                    BABELTHREAD_PRIOHINT_LOW);
     babelThreadResume(send_thread);
     receive_thread = babelThreadCreate(receive_thread_func,
-	                               &data,
+                                       &data,
                                        BABELTHREAD_PRIOHINT_LOW);
     babelThreadResume(receive_thread);
     printf("-> Heartbeat up and running!\n");
     printf("==========================================\n");
-    
-    /* Wait for input
-     */
+
     while(1) {
+        printf(">>");
+        fflush(stdout);
+        if (fgets(user_input, sizeof(user_input), stdin) == NULL) {
+            break;
+        }
 
-      printf(">>");
-      fflush(stdout); 
-      fgets(user_input, TEXT_LEN, stdin);
-
-      if (user_input[0] != '\n') {
-        if (strcmp(user_input, "&genkeys\n") == 0) {
-	        gen_keys();
-      	} else {
-
-          /* wait to send if busy
-           */
-          while (send_buf_flag != 0) {
-            babelThreadSleep(50);
-          }
-          strcpy(g_text_buffer, user_input);
-          send_buf_flag = 1;
-	}
-      }
+        if (user_input[0] != '\n') {
+            if (strcmp(user_input, "&genkeys\n") == 0) {
+                gen_keys();
+            } else {
+                while (send_buf_flag != 0) {
+                    babelThreadSleep(50);
+                }
+                memset(g_text_buffer, 0, CLIENT_TEXT_SIZE);
+                strncpy(g_text_buffer, user_input, CLIENT_TEXT_SIZE - 1);
+                send_buf_flag = 1;
+            }
+        }
     }
     babelSockClose(client_sock);
-    babelSockCleanup();    
+    babelSockCleanup();
     return 0;
 }

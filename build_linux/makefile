@@ -43,7 +43,7 @@ RMEXE := $(subst /,\,$(EXE)) # needed for windows del
 CPPFLAGS := -I$(INCDIR) -I$(BABEL_INCLUDE) -MMD -MP
 CFLAGS	 := -Wall -pthread
 LDFLAGS  := -Llib 
-LDLIBS   := -lm -lpthread
+LDLIBS   := -lm -lpthread -lsodium
 
 .PHONY: all clean remove
 

@@ -15,6 +15,10 @@ BINDIR	:= .
 BABEL_ARCH	:= ../babel/source/$(ARCH)
 BABEL_INCLUDE	:= ../babel/include
 
+# Path to a MinGW-built libsodium with include/sodium.h and lib/libsodium.a
+# Override on the command line or edit here if it lives elsewhere.
+LIBSODIUM_DIR	?= C:/libsodium
+
 # ----- Files -----
 EXE := $(BINDIR)/beatem_server.exe
 EXE_CLIENT := $(BINDIR)/beatem_client.exe
@@ -40,10 +44,10 @@ RMEXE := $(subst /,\,$(EXE)) # needed for windows del
 
 
 # ----- Flags -----
-CPPFLAGS := -I$(INCDIR) -I$(BABEL_INCLUDE) -MMD -MP
+CPPFLAGS := -I$(INCDIR) -I$(BABEL_INCLUDE) -I$(LIBSODIUM_DIR)/include -MMD -MP
 CFLAGS	 := -Wall
-LDFLAGS  := -Llib 
-LDLIBS   := -lm -lws2_32 -lwsock32
+LDFLAGS  := -Llib -L$(LIBSODIUM_DIR)/lib
+LDLIBS   := -lm -lws2_32 -lwsock32 -lsodium
 
 .PHONY: all clean remove
 

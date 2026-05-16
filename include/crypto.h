@@ -1,69 +1,47 @@
 
 #ifndef _CRYPTO_H_
-#define _CRYPTO_H
+#define _CRYPTO_H_
 
 #include <stdint.h>
-#include <sys/types.h>
-/*
-typedef uint64_t i64_t;
-typedef uint32_t i32_t;
-typedef uint16_t i16_t;
-typedef uint8_t  i8_t;
-*/
-void rsa_encrypt(uint8_t  *plaintext, uint16_t *ciphertext, uint64_t len, uint16_t e, uint16_t n);
-void rsa_decrypt(uint8_t  *plaintext, uint16_t *ciphertext, uint64_t len, uint16_t d, uint16_t n);
-void rsa_key_gen(uint16_t *p_e, uint16_t *p_d, uint16_t *p_n);
+#include <stddef.h>
 
-/* Maximum message size 
+/* Initialize the underlying crypto library. Call once at program start.
+ * Returns 0 on success, -1 on failure.
  */
-//#define MAX_MSG_SZ (2048u)
+int crypto_init(void);
 
-/* Example main
+/* Generate a fresh X25519 keypair.
+ *   pk: 32 bytes (CLIENT_KEY_SIZE)
+ *   sk: 32 bytes (CLIENT_SECRET_SIZE)
+ */
+void crypto_keygen(uint8_t *pk, uint8_t *sk);
+
+/* Seal a plaintext message into an authenticated, encrypted packet.
  *
-int main(int argc, char *argv[]) {
+ * Packet layout written to `out`:
+ *   [ 24-byte nonce ][ plain_len + 16 ciphertext+MAC ]
+ *
+ * `out` must have room for 24 + 16 + plain_len bytes.
+ * Returns total bytes written, or -1 on failure.
+ */
+int crypto_seal(uint8_t *out,
+                const uint8_t *plain, size_t plain_len,
+                const uint8_t *recipient_pk,
+                const uint8_t *sender_sk);
 
-    i16_t e;
-    i16_t n;
-    i8_t plaintext[MAX_MSG_SZ];
-    i16_t ciphertext[MAX_MSG_SZ];
-    i8_t *p_cipher = (i8_t *)ciphertext;
-    i64_t msg_sz = 0;
+/* Try to open a packet. Returns plaintext length on success, -1 on auth
+ * failure (wrong recipient, wrong sender, or tampered/random padding).
+ *
+ * `packet_len` must be at least 24 + 16. `out` must have room for
+ * `packet_len - 24 - 16` bytes.
+ */
+int crypto_open(uint8_t *out,
+                const uint8_t *packet, size_t packet_len,
+                const uint8_t *sender_pk,
+                const uint8_t *recipient_sk);
 
-    i16_t d;
-
-    // Generate the keys 
-    rsa_key_gen(&e, &d, &n);
-
-    // Print the values
-    printf("e = %d\n", e);
-    printf("d = %d\n", d);
-    printf("n = %d\n", n);
-
-    strcpy((char*)plaintext, "Roger isXX best 123#");
-    msg_sz = strlen((char*)plaintext);
-    printf("Message:%s Len:%d\n", plaintext, (int)msg_sz);
-    
-    // Encrypt the message
-    rsa_encrypt(plaintext, ciphertext, msg_sz, e, n);
-
-    // Print the ciphertext
-    for (int i = 0; i < 2 * msg_sz; i++) {
-        printf("%c", p_cipher[i]);
-    }
-
-    printf("\n--------------------------\n");
-
-    // Decrypt the message 
-    rsa_decrypt(plaintext, ciphertext, msg_sz, d, n);
-
-    // Print the plaintext 
-    for (int i = 0; i < msg_sz; i++) {
-        printf("%c", plaintext[i]);
-    }
-
-    
-    return 0;
-}
-*/
+/* Hex helpers. The hex buffer must be at least 2*key_len+1 bytes. */
+void crypto_key_to_hex(char *hex, const uint8_t *key, size_t key_len);
+int  crypto_hex_to_key(uint8_t *key, size_t key_len, const char *hex);
 
 #endif /* _CRYPTO_H_ */

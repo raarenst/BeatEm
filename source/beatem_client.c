@@ -10,6 +10,7 @@
 #include "crypto.h"
 #include "config.h"
 #include "protocol.h"
+#include "ws.h"
 
 #define HEX_KEY_LEN     (CLIENT_KEY_SIZE * 2 + 1)
 #define HEX_SECRET_LEN  (CLIENT_SECRET_SIZE * 2 + 1)
@@ -173,10 +174,10 @@ void *send_thread_func(void *arg) {
                 printf("Crypto seal error: %d\n", sealed);
                 error_flag = 1;
             } else {
-                res = babelSockWriteAll(client_sock,
-                                        (char*)g_send_buffer,
-                                        g_client_packet_size);
-                if ((size_t)res != g_client_packet_size) {
+                res = ws_send_binary(client_sock,
+                                     g_send_buffer,
+                                     g_client_packet_size, 1);
+                if (res < 0) {
                     printf("Client write error: %d\n", res);
                     error_flag = 1;
                 }
@@ -186,10 +187,10 @@ void *send_thread_func(void *arg) {
              * cannot distinguish these from real ciphertext.
              */
             crypto_random_bytes(g_send_buffer, g_client_packet_size);
-            res = babelSockWriteAll(client_sock,
-                                    (char*)g_send_buffer,
-                                    g_client_packet_size);
-            if ((size_t)res != g_client_packet_size) {
+            res = ws_send_binary(client_sock,
+                                 g_send_buffer,
+                                 g_client_packet_size, 1);
+            if (res < 0) {
                 printf("Client write rnd buffer error: %d\n", res);
                 error_flag = 1;
             }
@@ -208,9 +209,9 @@ void *receive_thread_func(void *arg) {
      * 100% CPU once a read failed.
      */
     while (error_flag == 0) {
-        res = babelSockReadAll(client_sock,
-                               (char*)g_recv_buffer,
-                               g_server_packet_size);
+        res = ws_recv_binary(client_sock,
+                             g_recv_buffer,
+                             g_server_packet_size);
         if ((size_t)res != g_server_packet_size) {
             printf("Client read error: %d\n", res);
             error_flag = 1;
@@ -265,7 +266,7 @@ void *receive_thread_func(void *arg) {
 
 static int read_handshake(int sock, proto_handshake_t *h) {
     uint8_t buf[PROTO_HANDSHAKE_SIZE];
-    int n = babelSockReadAll(sock, (char*)buf, PROTO_HANDSHAKE_SIZE);
+    int n = ws_recv_binary(sock, buf, PROTO_HANDSHAKE_SIZE);
     if (n != PROTO_HANDSHAKE_SIZE) {
         printf("Could not read handshake: %d\n", n);
         return -1;
@@ -367,6 +368,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("-> Connected to server!\n");
+
+    if (ws_client_handshake(client_sock, g_server_url, SERVER_PORT) != 0) {
+        printf("WebSocket handshake failed.\n");
+        babelSockClose(client_sock);
+        return 1;
+    }
+    printf("-> WebSocket upgrade complete.\n");
 
     if (read_handshake(client_sock, &h) != 0) {
         babelSockClose(client_sock);

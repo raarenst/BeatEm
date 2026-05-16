@@ -5,6 +5,7 @@
 #include "config.h"
 #include "crypto.h"
 #include "protocol.h"
+#include "ws.h"
 #include "babelsock.h"
 #include "babeltime.h"
 
@@ -123,6 +124,9 @@ int main(void) {
           new_sock = babelSockAccept(server_sock);
           if (new_sock < 0) {
             printf("Could not accept client: %d\n", new_sock);
+          } else if (ws_server_handshake(new_sock) != 0) {
+            printf("WebSocket handshake failed; closing client.\n");
+            babelSockClose(new_sock);
           } else {
             added = 0;
             for (int idy = 0; idy < SERVER_MAX_NR_OF_CLIENTS; idy++) {
@@ -138,16 +142,18 @@ int main(void) {
               printf("Max nr of clients reached, refusing connection.\n");
               babelSockClose(new_sock);
             } else if (send_handshake(new_sock) != 0) {
-              printf("Handshake send failed; closing client.\n");
+              printf("Protocol handshake send failed; closing client.\n");
               remove_client(new_sock);
               babelSockClose(new_sock);
             }
           }
         } else {
 
-          /* It is a client sending a packet or disconnecting
+          /* It is a client sending a packet or disconnecting. Read one
+           * WebSocket binary frame; we expect exactly CLIENT_PACKET_SIZE
+           * bytes of payload.
            */
-          rv = babelSockReadAll(select_list[idx], g_recvbuf, CLIENT_PACKET_SIZE);
+          rv = ws_recv_binary(select_list[idx], (uint8_t*)g_recvbuf, CLIENT_PACKET_SIZE);
           if (rv != CLIENT_PACKET_SIZE) {
             printf("*** ERROR: Receive from client error: %d\n", rv);
             babelSockClose(select_list[idx]);
@@ -208,13 +214,15 @@ int send_buffer() {
   crypto_random_bytes((uint8_t*)g_sendbuf + startbuf,
                       SERVER_PACKET_SIZE - startbuf);
 
-  /* Send whole buffer to every connected client. Walk the full array so
-   * a removed-but-not-compacted slot can never confuse the iteration.
+  /* Send whole buffer to every connected client as a single WS binary
+   * frame. Walk the full array so a removed-but-not-compacted slot can
+   * never confuse the iteration.
    */
   for (int idx = 0; idx < SERVER_MAX_NR_OF_CLIENTS; idx++) {
     if (g_client_list[idx] == 0) continue;
-    res = babelSockWriteAll(g_client_list[idx], g_sendbuf, SERVER_PACKET_SIZE);
-    if (res != SERVER_PACKET_SIZE) {
+    res = ws_send_binary(g_client_list[idx],
+                         (const uint8_t*)g_sendbuf, SERVER_PACKET_SIZE, 0);
+    if (res < 0) {
       printf("Client write error: %d\n", res);
       babelSockClose(g_client_list[idx]);
       g_client_list[idx] = 0;
@@ -234,8 +242,8 @@ int send_handshake(int sock) {
     .client_packet_size = CLIENT_PACKET_SIZE,
   };
   proto_handshake_encode(buf, &h);
-  int n = babelSockWriteAll(sock, (char*)buf, PROTO_HANDSHAKE_SIZE);
-  return (n == PROTO_HANDSHAKE_SIZE) ? 0 : -1;
+  int n = ws_send_binary(sock, buf, PROTO_HANDSHAKE_SIZE, 0);
+  return (n > 0) ? 0 : -1;
 }
 
 int create_server() {

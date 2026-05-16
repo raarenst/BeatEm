@@ -213,19 +213,24 @@ static int compute_accept(const char *client_key, char *out, size_t out_max) {
 }
 
 int ws_server_handshake(int sock) {
-    /* Read HTTP request headers up to the blank line. */
+    /* Read HTTP request headers byte-by-byte until "\r\n\r\n". Doing it
+     * one byte at a time costs us a few hundred recv() syscalls during
+     * the one-shot handshake but guarantees we stop exactly at the
+     * header/body boundary, so any frame data that the client already
+     * sent is left in the kernel buffer for ws_recv_binary to pick up.
+     */
     char buf[2048];
     size_t total = 0;
     while (total < sizeof(buf) - 1) {
-        ssize_t r = recv(sock, buf + total, sizeof(buf) - 1 - total, 0);
-        if (r < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        if (r == 0) return -1;
-        total += (size_t)r;
+        uint8_t c;
+        if (read_exact(sock, &c, 1) != 0) return -1;
+        buf[total++] = (char)c;
         buf[total] = '\0';
-        if (strstr(buf, "\r\n\r\n")) break;
+        if (total >= 4 &&
+            buf[total - 4] == '\r' && buf[total - 3] == '\n' &&
+            buf[total - 2] == '\r' && buf[total - 1] == '\n') {
+            break;
+        }
     }
     if (total >= sizeof(buf) - 1) return -1;
 
@@ -272,15 +277,15 @@ int ws_client_handshake(int sock, const char *host, int port) {
     char buf[2048];
     size_t total = 0;
     while (total < sizeof(buf) - 1) {
-        ssize_t r = recv(sock, buf + total, sizeof(buf) - 1 - total, 0);
-        if (r < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        if (r == 0) return -1;
-        total += (size_t)r;
+        uint8_t c;
+        if (read_exact(sock, &c, 1) != 0) return -1;
+        buf[total++] = (char)c;
         buf[total] = '\0';
-        if (strstr(buf, "\r\n\r\n")) break;
+        if (total >= 4 &&
+            buf[total - 4] == '\r' && buf[total - 3] == '\n' &&
+            buf[total - 2] == '\r' && buf[total - 1] == '\n') {
+            break;
+        }
     }
     if (total >= sizeof(buf) - 1) return -1;
 

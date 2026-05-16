@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & run
 
-Two C executables — `beatem_server` and `beatem_client` — share the same source tree but are built per-platform from separate directories. Both link against **libsodium** (X25519 + XSalsa20 + Poly1305 via `crypto_box`).
+Two C executables — `beatem_server` and `beatem_client` — share the same source tree but are built per-platform from separate directories. Both link against **libsodium** (X25519 + XSalsa20 + Poly1305 via `crypto_box`) and carry traffic over **plain WebSocket frames** (RFC 6455, implemented in `source/ws.c` — no TLS; reverse-proxy if you need it). A third client lives in `web/` as a static HTML/JS page.
 
 **Linux** (uses system `gcc` and `libsodium-dev`):
 ```
@@ -32,6 +32,12 @@ make test-smoke   # just the smoke test (requires `make all`)
 beatem_client <my_secret_hex> <my_public_hex> <peer_public_hex> [server_ip]
 ```
 Each key is 64 hex chars (32 bytes). Generate keypairs out-of-band with libsodium's `crypto_box_keypair` (or use the `&genkeys` runtime command on an already-connected client and re-share the new public key manually).
+
+**Web client** (`web/index.html`): single static page using `libsodium-wrappers` via CDN and the browser's native `WebSocket`. Serve over plain HTTP because `ws://` from a `file://` origin is unreliable:
+```
+cd web && python3 -m http.server 8080
+```
+Then open `http://localhost:8080/`, paste hex keys (or click *Generate new keypair*), and connect. Implements the exact same wire format as the CLI client.
 
 ## Architecture
 

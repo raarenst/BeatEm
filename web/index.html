@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BeatEm Web Client</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: #111;
+    color: #ddd;
+    margin: 0;
+    padding: 1rem;
+    max-width: 720px;
+    margin-inline: auto;
+  }
+  h1 { font-size: 1.2rem; color: #eee; }
+  label { display: block; margin-top: 0.6rem; font-size: 0.85rem; color: #aaa; }
+  input[type="text"], textarea {
+    width: 100%;
+    box-sizing: border-box;
+    background: #1c1c1c;
+    color: #ddd;
+    border: 1px solid #333;
+    padding: 0.4rem 0.5rem;
+    font: inherit;
+    border-radius: 3px;
+  }
+  button {
+    margin-top: 0.6rem;
+    background: #2d2d2d;
+    color: #ddd;
+    border: 1px solid #444;
+    padding: 0.4rem 0.8rem;
+    font: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+  button:hover { background: #383838; }
+  #status { color: #888; margin-top: 0.5rem; font-size: 0.85rem; }
+  #status.error { color: #f88; }
+  #status.ok { color: #8f8; }
+  .log {
+    background: #0a0a0a;
+    border: 1px solid #222;
+    padding: 0.5rem;
+    height: 320px;
+    overflow-y: auto;
+    border-radius: 3px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+  .log .me   { color: #6cc; }
+  .log .peer { color: #fc6; }
+  .log .sys  { color: #777; font-style: italic; }
+  .hidden { display: none; }
+  .small { font-size: 0.75rem; color: #777; }
+  hr { border: none; border-top: 1px solid #222; margin: 1rem 0; }
+</style>
+</head>
+<body>
+
+<h1>BeatEm — web client</h1>
+<p class="small">
+  Privacy-preserving chat. Every client emits fixed-size packets at a
+  fixed cadence; the server broadcasts the union to everyone. Cover
+  packets are indistinguishable from real ones on the wire.
+</p>
+
+<div id="setup">
+  <label>My secret key (hex, 64 chars)</label>
+  <input id="my_sk" type="text" placeholder="hex">
+  <label>My public key (hex, 64 chars)</label>
+  <input id="my_pk" type="text" placeholder="hex">
+  <label>Peer's public key (hex, 64 chars)</label>
+  <input id="peer_pk" type="text" placeholder="hex">
+  <label>Server (host:port)</label>
+  <input id="server" type="text" value="localhost:27015">
+  <button id="gen_btn">Generate new keypair</button>
+  <button id="connect_btn">Connect</button>
+  <p id="status"></p>
+</div>
+
+<div id="chat" class="hidden">
+  <div id="log" class="log"></div>
+  <label>Message (will be padded/truncated to the negotiated text budget)</label>
+  <input id="msg" type="text" autocomplete="off">
+  <button id="send_btn">Send</button>
+  <p class="small" id="info"></p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/dist/browsers/sodium.js"></script>
+<script>
+"use strict";
+
+/* ---- Protocol constants (must match include/crypto.h + protocol.h) ---- */
+const NONCE_SIZE        = 24;
+const MAC_SIZE          = 16;
+const KEY_SIZE          = 32;
+const COUNTER_SIZE      = 4;
+const HANDSHAKE_SIZE    = 16;
+const PROTO_MAGIC       = [0x42, 0x45, 0x41, 0x54];  // "BEAT"
+const PROTO_VERSION     = 1;
+
+/* ---- DOM ---- */
+const $ = (id) => document.getElementById(id);
+const log = (cls, txt) => {
+  const el = $("log");
+  const line = document.createElement("div");
+  line.className = cls;
+  line.textContent = txt;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+};
+const setStatus = (cls, txt) => {
+  $("status").className = cls;
+  $("status").textContent = txt;
+};
+
+/* ---- State (populated after handshake) ---- */
+let sock = null;
+let mySK = null, myPK = null, peerPK = null;
+let pktSize = 0, plainSize = 0, textSize = 0, maxClients = 0, heartbeatMs = 0;
+let sendCounter = 0;
+let recvCounter = 0;
+let heartbeatTimer = null;
+let pendingMessage = null;   // Uint8Array, length=textSize, or null
+
+/* ---- Helpers ---- */
+const fromHex = (s) => sodium.from_hex(s.trim());
+const toHex   = (b) => sodium.to_hex(b);
+
+function readBE32(arr, off) {
+  return ((arr[off] << 24) | (arr[off+1] << 16) | (arr[off+2] << 8) | arr[off+3]) >>> 0;
+}
+function writeBE32(arr, off, v) {
+  arr[off]   = (v >>> 24) & 0xFF;
+  arr[off+1] = (v >>> 16) & 0xFF;
+  arr[off+2] = (v >>>  8) & 0xFF;
+  arr[off+3] =  v         & 0xFF;
+}
+
+function decodeHandshake(buf) {
+  const a = new Uint8Array(buf);
+  if (a.length !== HANDSHAKE_SIZE) return null;
+  if (a[0] !== PROTO_MAGIC[0] || a[1] !== PROTO_MAGIC[1] ||
+      a[2] !== PROTO_MAGIC[2] || a[3] !== PROTO_MAGIC[3]) return null;
+  const version            = (a[4] << 8) | a[5];
+  if (version !== PROTO_VERSION) return null;
+  const max_clients        = (a[6] << 8) | a[7];
+  const heartbeat_ms       = readBE32(a, 8);
+  const client_packet_size = readBE32(a, 12);
+  return { version, max_clients, heartbeat_ms, client_packet_size };
+}
+
+/* Build the plaintext for one outgoing message:
+ *   [ 32B sender_pk ][ 4B counter ][ text padded with zeros ]
+ */
+function buildPlaintext(text) {
+  const utf8 = new TextEncoder().encode(text);
+  const out  = new Uint8Array(plainSize);
+  out.set(myPK, 0);
+
+  /* Bump send counter, monotonic w.r.t. wall-clock seconds so it
+   * survives reloads. */
+  const now = Math.floor(Date.now() / 1000) >>> 0;
+  sendCounter = (now > sendCounter) ? now : (sendCounter + 1) >>> 0;
+  writeBE32(out, KEY_SIZE, sendCounter);
+
+  /* Truncate text to fit textSize. */
+  const room = textSize;
+  const n = Math.min(utf8.length, room);
+  out.set(utf8.subarray(0, n), KEY_SIZE + COUNTER_SIZE);
+  return out;
+}
+
+function sealAndSend() {
+  const plain = pendingMessage ?? null;
+  pendingMessage = null;
+
+  let packet;
+  if (plain) {
+    const nonce = sodium.randombytes_buf(NONCE_SIZE);
+    const ct    = sodium.crypto_box_easy(plain, nonce, peerPK, mySK);
+    packet = new Uint8Array(NONCE_SIZE + ct.length);
+    packet.set(nonce, 0);
+    packet.set(ct, NONCE_SIZE);
+  } else {
+    /* Cover packet — CSPRNG bytes, indistinguishable from real
+     * crypto_box ciphertext to any observer without the key. */
+    packet = sodium.randombytes_buf(pktSize);
+  }
+  if (packet.length !== pktSize) {
+    log("sys", `[internal] outgoing packet size ${packet.length} != ${pktSize}`);
+    return;
+  }
+  sock.send(packet);
+}
+
+function handleBroadcast(buf) {
+  const arr = new Uint8Array(buf);
+  if (arr.length !== maxClients * pktSize) {
+    /* Could be the 16-byte handshake during a reconnect; ignore other
+     * sizes silently. */
+    return;
+  }
+  for (let i = 0; i < maxClients; i++) {
+    const slot  = arr.subarray(i * pktSize, (i + 1) * pktSize);
+    const nonce = slot.subarray(0, NONCE_SIZE);
+    const ct    = slot.subarray(NONCE_SIZE);
+
+    let plain;
+    try {
+      plain = sodium.crypto_box_open_easy(ct, nonce, peerPK, mySK);
+    } catch (_e) {
+      continue;  /* auth failure → not for us, or cover, or tampered */
+    }
+    if (plain.length !== plainSize) continue;
+
+    /* Drop our own echoed packet. */
+    let isOwn = true;
+    for (let k = 0; k < KEY_SIZE; k++) {
+      if (plain[k] !== myPK[k]) { isOwn = false; break; }
+    }
+    if (isOwn) continue;
+
+    /* Replay-protection: strictly increasing counter. */
+    const pktCounter = readBE32(plain, KEY_SIZE);
+    if (pktCounter <= recvCounter) continue;
+    recvCounter = pktCounter;
+
+    /* Trim trailing zero padding from the text region. */
+    let endIdx = plain.length;
+    while (endIdx > KEY_SIZE + COUNTER_SIZE && plain[endIdx - 1] === 0) endIdx--;
+    const textBytes = plain.subarray(KEY_SIZE + COUNTER_SIZE, endIdx);
+    const text = new TextDecoder().decode(textBytes);
+    log("peer", `peer: ${text}`);
+  }
+}
+
+/* ---- Wiring ---- */
+$("gen_btn").addEventListener("click", async () => {
+  await sodium.ready;
+  const kp = sodium.crypto_box_keypair();
+  $("my_sk").value  = toHex(kp.privateKey);
+  $("my_pk").value  = toHex(kp.publicKey);
+  setStatus("ok",
+    "New keypair generated. Share the public key with your peer out-of-band.");
+});
+
+$("connect_btn").addEventListener("click", async () => {
+  await sodium.ready;
+  try {
+    mySK   = fromHex($("my_sk").value);
+    myPK   = fromHex($("my_pk").value);
+    peerPK = fromHex($("peer_pk").value);
+  } catch (e) {
+    setStatus("error", `Invalid hex key: ${e.message}`);
+    return;
+  }
+  if (mySK.length !== KEY_SIZE || myPK.length !== KEY_SIZE || peerPK.length !== KEY_SIZE) {
+    setStatus("error", "Each key must be 64 hex chars (32 bytes).");
+    return;
+  }
+
+  const url = "ws://" + $("server").value;
+  setStatus("", `Connecting to ${url}…`);
+  sock = new WebSocket(url);
+  sock.binaryType = "arraybuffer";
+
+  let gotHandshake = false;
+
+  sock.addEventListener("open", () => {
+    setStatus("ok", "Connected. Waiting for protocol handshake…");
+  });
+
+  sock.addEventListener("message", (ev) => {
+    if (!gotHandshake) {
+      const h = decodeHandshake(ev.data);
+      if (!h) {
+        setStatus("error", "Bad handshake from server.");
+        sock.close();
+        return;
+      }
+      maxClients   = h.max_clients;
+      heartbeatMs  = h.heartbeat_ms;
+      pktSize      = h.client_packet_size;
+      plainSize    = pktSize - NONCE_SIZE - MAC_SIZE;
+      textSize     = plainSize - KEY_SIZE - COUNTER_SIZE;
+      gotHandshake = true;
+
+      $("setup").classList.add("hidden");
+      $("chat").classList.remove("hidden");
+      $("info").textContent =
+        `Server cadence ${heartbeatMs} ms, ${pktSize}-byte slots, max ${maxClients} clients. ` +
+        `Text budget ${textSize} bytes/message.`;
+      log("sys", `connected — handshake v${h.version} ok`);
+
+      /* Start the constant-cadence send loop. */
+      heartbeatTimer = setInterval(sealAndSend, heartbeatMs);
+      return;
+    }
+    handleBroadcast(ev.data);
+  });
+
+  sock.addEventListener("close", () => {
+    setStatus("error", "Disconnected.");
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    $("setup").classList.remove("hidden");
+    $("chat").classList.add("hidden");
+  });
+
+  sock.addEventListener("error", (e) => {
+    setStatus("error", "WebSocket error: " + e.message);
+  });
+});
+
+$("send_btn").addEventListener("click", () => {
+  const text = $("msg").value;
+  if (!text) return;
+  pendingMessage = buildPlaintext(text);
+  log("me", `me:   ${text}`);
+  $("msg").value = "";
+});
+
+$("msg").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("send_btn").click(); }
+});
+</script>
+</body>
+</html>

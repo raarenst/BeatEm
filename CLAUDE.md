@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & run
 
-Two C executables — `beatem_server` and `beatem_client` — share the same source tree but are built per-platform from separate directories. Both link against **libsodium** (X25519 + XSalsa20 + Poly1305 via `crypto_box`) and carry traffic over **plain WebSocket frames** (RFC 6455, implemented in `source/ws.c` — no TLS; reverse-proxy if you need it). A third client lives in `web/` as a static HTML/JS page.
+Two C executables — `beatem_server` and `beatem_client` — share the same source tree. Both link against **libsodium** (X25519 + XSalsa20 + Poly1305 via `crypto_box`) and carry traffic over **plain WebSocket frames** (RFC 6455, implemented in `source/ws.c` — no TLS; reverse-proxy if you need it). A third client lives in `web/` as a static HTML/JS page. The build targets POSIX directly; there is no cross-platform shim layer.
 
 **Linux** (uses system `gcc` and `libsodium-dev`):
 ```
@@ -13,9 +13,9 @@ cd build_linux && make all        # builds both binaries into build_linux/
 make clean                        # removes obj/*.o and *.d
 make remove                       # also removes the executable
 ```
-The `make clean` rule contains a known pre-existing bug — its `RMOBJ` substitution mangles Linux paths (`obj/foo.o` → `objfoo.o`). Rebuild after `rm -rf obj` instead.
+`make clean` removes `obj/` and the built binaries.
 
-**Windows** (MinGW-w64): `build/makefile` hard-codes a path to `C:\Program Files\mingw-w64\x86_64-8.1.0-posix-seh-rt_v6-rev0\mingw64\bin\gcc.exe`. Adjust `CC`/`LINKER` if your toolchain lives elsewhere. It also expects a MinGW-built libsodium at `LIBSODIUM_DIR` (default `C:/libsodium`, with `include/sodium.h` and `lib/libsodium.a`). `build/make.bat` runs `mingw32-make.exe -f makefile all`. **The Windows build is currently untested after the libsodium migration.**
+**Windows** (`build/makefile`): currently **broken**. The Phase-3 WebSocket migration removed the cross-platform `babel/` shim and source/ws.c, source/beatem_server.c, and source/beatem_client.c now call POSIX socket APIs (`recv`/`send`/`accept`/`select`/`pthread`/`<netdb.h>`) directly. A Windows port needs winsock2 replacements, a pthread shim (MinGW pthreads-win32 or native CreateThread + condition variables), and a `<unistd.h>` stand-in. The makefile retains its libsodium plumbing for a future port but does not build today.
 
 **Tests** live in `tests/` and run via the makefile:
 ```
@@ -74,7 +74,7 @@ Connect-time handshake (16 bytes, server → client, big-endian, see `include/pr
 
 **3. Protocol constants** (`include/config.h`) — the server's compile-time defaults (`CLIENT_PACKET_SIZE`, `SERVER_HEART_BEAT_S`, `SERVER_MAX_NR_OF_CLIENTS`, `SERVER_PACKET_SIZE`, `SERVER_MAX_NR_OF_PACKETS`). The client no longer reads these at runtime — it derives its own sizes from the handshake. Sodium-derived constants (`CLIENT_NONCE_SIZE`, `CLIENT_MAC_SIZE`, `CLIENT_KEY_SIZE`, `CLIENT_SECRET_SIZE`) are used by both sides since they're fixed by the crypto primitive.
 
-**4. Portability layer — `babel/`** — a vendored cross-platform shim. Public headers live in `babel/include/` (`babelsock.h`, `babelthread.h`, `babeltime.h`); per-OS implementations in `babel/source/linux/` and `babel/source/win64/`. The makefiles pick the right `babel/source/$(ARCH)/` directory via the `ARCH` variable (`linux` vs `win64`). When adding a babel symbol used by the app, you must implement it on **both** platforms or the other build will break. Note that some headers (`babeldl.h`, `babelsem.h`, `display.h`) are declared but only implemented on win64.
+**4. Transport — `source/ws.c`** — minimal RFC 6455 WebSocket framing over a connected TCP socket. Supports the HTTP upgrade (both directions, with a vendored public-domain SHA-1 for the `Sec-WebSocket-Accept` value), unmasked server→client frames, masked client→server frames, and short + u16-extended payload lengths. Plain `ws://` only; TLS belongs behind a reverse proxy.
 
 ## Conventions worth knowing
 

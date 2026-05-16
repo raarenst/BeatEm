@@ -1,84 +1,75 @@
 
+# Windows (MinGW-w64) build configuration.
+#
+# WARNING: this build is currently broken. After the Phase-3 transport
+# migration, source/ws.c, source/beatem_server.c, and
+# source/beatem_client.c call POSIX socket APIs directly (recv/send/
+# accept, struct sockaddr_in, <pthread.h>, <sys/select.h>, <netdb.h>).
+# A Windows port needs:
+#   - winsock2 replacements for recv/send/accept/socket/connect/select,
+#     WSAStartup/WSACleanup, and SOCKET_ERROR/WSAEINTR handling in
+#     ws.c's read_exact/write_exact;
+#   - a pthread shim (the MinGW pthreads-win32 package works, or just
+#     swap to native CreateThread + CRITICAL_SECTION/CONDITION_VARIABLE);
+#   - <unistd.h> stand-ins for close()/sleep_ms().
+#
+# Until that port lands, only the Linux build (../build_linux/makefile)
+# is supported.
+
 # ----- Tools -----
 CC	= "C:\Program Files\mingw-w64\x86_64-8.1.0-posix-seh-rt_v6-rev0\mingw64\bin\gcc.exe"
 LINKER	= "C:\Program Files\mingw-w64\x86_64-8.1.0-posix-seh-rt_v6-rev0\mingw64\bin\gcc.exe"
-rm 	= del
-
-ARCH	:= win64
 
 # ----- Folders -----
 INCDIR	:= ../include
 SRCDIR	:= ../source
-LIBDIR	:= ../lib
 OBJDIR	:= obj
 BINDIR	:= .
-BABEL_ARCH	:= ../babel/source/$(ARCH)
-BABEL_INCLUDE	:= ../babel/include
 
 # Path to a MinGW-built libsodium with include/sodium.h and lib/libsodium.a
-# Override on the command line or edit here if it lives elsewhere.
 LIBSODIUM_DIR	?= C:/libsodium
 
 # ----- Files -----
-EXE := $(BINDIR)/beatem_server.exe
+EXE        := $(BINDIR)/beatem_server.exe
 EXE_CLIENT := $(BINDIR)/beatem_client.exe
 
-SRC := ../source/beatem_server.c
-SRC += ../source/crypto.c
-SRC += ../source/protocol.c
-CLIENT_SRC := ../source/beatem_client.c
-CLIENT_SRC += ../source/crypto.c
-CLIENT_SRC += ../source/protocol.c
+SRC := $(SRCDIR)/beatem_server.c
+SRC += $(SRCDIR)/crypto.c
+SRC += $(SRCDIR)/protocol.c
+SRC += $(SRCDIR)/ws.c
+CLIENT_SRC := $(SRCDIR)/beatem_client.c
+CLIENT_SRC += $(SRCDIR)/crypto.c
+CLIENT_SRC += $(SRCDIR)/protocol.c
+CLIENT_SRC += $(SRCDIR)/ws.c
 
-BSRC := $(BABEL_ARCH)/babelsock.c
-BSRC += $(BABEL_ARCH)/babelthread.c
-BSRC += $(BABEL_ARCH)/babeltime.c
-
-
-#SRC := $(wildcard $(SRCDIR)/*.c)
-OBJ := $(SRC:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
-BOBJ := $(BSRC:$(BABEL_ARCH)/%.c=$(OBJDIR)/%.o)
+OBJ        := $(SRC:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 CLIENT_OBJ := $(CLIENT_SRC:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
-RMOBJ := $(subst /,\,$(OBJ)) # needed for windows del
-RMEXE := $(subst /,\,$(EXE)) # needed for windows del
-
-
-
 # ----- Flags -----
-CPPFLAGS := -I$(INCDIR) -I$(BABEL_INCLUDE) -I$(LIBSODIUM_DIR)/include -MMD -MP
-CFLAGS	 := -Wall
-LDFLAGS  := -Llib -L$(LIBSODIUM_DIR)/lib
+CPPFLAGS := -I$(INCDIR) -I$(LIBSODIUM_DIR)/include -MMD -MP
+CFLAGS   := -Wall
+LDFLAGS  := -L$(LIBSODIUM_DIR)/lib
 LDLIBS   := -lm -lws2_32 -lwsock32 -lsodium
 
-.PHONY: all clean remove
+.PHONY: all clean
 
-all: $(EXE) $(EXE_CLIENT) 
+all: $(EXE) $(EXE_CLIENT)
 
-disp:
-	@echo $(RMOBJ)
-
-$(EXE): $(OBJ) $(BOBJ) | $(BINDIR)
+$(EXE): $(OBJ) | $(BINDIR)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-$(EXE_CLIENT): $(CLIENT_OBJ) $(BOBJ) | $(BINDIR)
+$(EXE_CLIENT): $(CLIENT_OBJ) | $(BINDIR)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-$(OBJDIR)/%.o:	$(BABEL_ARCH)/%.c | $(OBJDIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-
-$(OBJDIR)/%.o:	$(SRCDIR)/%.c | $(OBJDIR)
+$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BINDIR) $(OBJDIR):
 	mkdir $@
 
 clean:
-	@$(rm) $(RMOBJ) $(RMOBJ:.o=.d)
-	@echo "Cleanup complete!"
-
-remove: clean
-	@$(rm) $(RMEXE)
-	@echo "Executable removed!"
+	-del /Q "$(subst /,\,$(OBJDIR))\*.o" "$(subst /,\,$(OBJDIR))\*.d" 2>nul
+	-del /Q "$(subst /,\,$(EXE))" "$(subst /,\,$(EXE_CLIENT))" 2>nul
 
 -include $(OBJ:.o=.d)
+-include $(CLIENT_OBJ:.o=.d)

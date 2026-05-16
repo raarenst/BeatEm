@@ -3,14 +3,24 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+#include <unistd.h>
 #include <pthread.h>
-#include "babelsock.h"
-#include "babelthread.h"
-#include "babeltime.h"
+#include <sys/socket.h>
+#include <netdb.h>
 #include "crypto.h"
 #include "config.h"
 #include "protocol.h"
 #include "ws.h"
+
+/* Sleep current thread for `ms` milliseconds. Replaces babelThreadSleep. */
+static void sleep_ms(uint32_t ms) {
+    struct timespec ts = {
+        .tv_sec  = ms / 1000,
+        .tv_nsec = (long)(ms % 1000) * 1000000L,
+    };
+    nanosleep(&ts, NULL);
+}
 
 #define HEX_KEY_LEN     (CLIENT_KEY_SIZE * 2 + 1)
 #define HEX_SECRET_LEN  (CLIENT_SECRET_SIZE * 2 + 1)
@@ -195,7 +205,7 @@ void *send_thread_func(void *arg) {
                 error_flag = 1;
             }
         }
-        babelThreadSleep(g_heartbeat_ms);
+        sleep_ms(g_heartbeat_ms);
     }
     return NULL;
 }
@@ -256,9 +266,9 @@ void *receive_thread_func(void *arg) {
             printf("\n         ---(%s)---\n>>", (char*)text);
             fflush(stdout);
         }
-        /* No sleep here: babelSockReadAll already blocks for a full
-         * broadcast, so a sleep just lets the TCP buffer accumulate
-         * stale broadcasts and adds latency to real messages.
+        /* No sleep here: ws_recv_binary already blocks until a full
+         * broadcast frame arrives. Adding a sleep would only let stale
+         * broadcasts pile up in the TCP buffer.
          */
     }
     return NULL;
@@ -314,11 +324,40 @@ static void usage(const char *prog) {
            CLIENT_KEY_SIZE * 2, CLIENT_KEY_SIZE);
 }
 
+/* Open a TCP connection to host:port. Returns the connected socket fd
+ * on success, -1 on failure. Resolves hostnames via getaddrinfo so
+ * both IPv4 numeric strings and DNS names work.
+ */
+static int tcp_connect(const char *host, int port) {
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(host, port_str, &hints, &res) != 0 || res == NULL) {
+        return -1;
+    }
+    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock < 0) {
+        freeaddrinfo(res);
+        return -1;
+    }
+    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+        close(sock);
+        freeaddrinfo(res);
+        return -1;
+    }
+    freeaddrinfo(res);
+    return sock;
+}
+
 int main(int argc, char *argv[]) {
-    int res;
     int data;
-    BabelThread_t *send_thread;
-    BabelThread_t *receive_thread;
+    pthread_t send_thread;
+    pthread_t receive_thread;
     proto_handshake_t h;
 
     if (crypto_init() != 0) {
@@ -352,32 +391,23 @@ int main(int argc, char *argv[]) {
     send_buf_flag = 0;
     error_flag = 0;
 
-    res = babelSockInit();
-    if (res != BABELSOCK_OK) {
-        printf("Could not initialize babelsock: %d\n", res);
-        return 1;
-    }
-    client_sock = babelSock(BABELSOCK_TCP);
+    client_sock = tcp_connect(g_server_url, SERVER_PORT);
     if (client_sock < 0) {
-        printf("Could not create client socket: %d\n", client_sock);
-        return 1;
-    }
-    res = babelSockConnect(client_sock, g_server_url, SERVER_PORT);
-    if (res != BABELSOCK_OK) {
-        printf("Could not connect to server: %d\n", res);
+        printf("Could not connect to server %s:%d (%s)\n",
+               g_server_url, SERVER_PORT, strerror(errno));
         return 1;
     }
     printf("-> Connected to server!\n");
 
     if (ws_client_handshake(client_sock, g_server_url, SERVER_PORT) != 0) {
         printf("WebSocket handshake failed.\n");
-        babelSockClose(client_sock);
+        close(client_sock);
         return 1;
     }
     printf("-> WebSocket upgrade complete.\n");
 
     if (read_handshake(client_sock, &h) != 0) {
-        babelSockClose(client_sock);
+        close(client_sock);
         return 1;
     }
     g_max_clients        = h.max_clients;
@@ -389,17 +419,18 @@ int main(int argc, char *argv[]) {
     printf("-> Handshake received (v=%u).\n", h.version);
 
     if (allocate_buffers() != 0) {
-        babelSockClose(client_sock);
+        close(client_sock);
         return 1;
     }
 
     print_welcome();
 
-    babelThreadInit();
-    send_thread = babelThreadCreate(send_thread_func, &data, BABELTHREAD_PRIOHINT_LOW);
-    babelThreadResume(send_thread);
-    receive_thread = babelThreadCreate(receive_thread_func, &data, BABELTHREAD_PRIOHINT_LOW);
-    babelThreadResume(receive_thread);
+    if (pthread_create(&send_thread, NULL, send_thread_func, &data) != 0 ||
+        pthread_create(&receive_thread, NULL, receive_thread_func, &data) != 0) {
+        printf("Could not start worker threads.\n");
+        close(client_sock);
+        return 1;
+    }
     printf("-> Heartbeat up and running!\n");
     printf("==========================================\n");
 
@@ -447,7 +478,6 @@ int main(int argc, char *argv[]) {
         }
     }
     free(user_input);
-    babelSockClose(client_sock);
-    babelSockCleanup();
+    close(client_sock);
     return 0;
 }

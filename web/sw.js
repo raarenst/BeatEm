@@ -9,7 +9,7 @@
  * Bump CACHE_NAME when index.html or assets change so old clients
  * fetch the new version on next visit.
  */
-const CACHE_NAME = "beatem-v1";
+const CACHE_NAME = "beatem-v2";  /* bump when index.html / assets change */
 const ASSETS = [
   "/",
   "/index.html",

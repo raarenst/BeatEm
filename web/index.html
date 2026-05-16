@@ -146,6 +146,42 @@
     text-align: center;
     font-style: italic;
   }
+
+  /* Modal (QR display + QR scanner) */
+  .modal {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  .modal-content {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 1rem;
+    max-width: 90vw;
+    text-align: center;
+  }
+  .modal-content h2 { font-size: 1rem; margin: 0 0 0.6rem; color: #eee; }
+  .modal-content .small { color: #888; margin: 0.5rem 0; }
+  #qr_display svg { width: 280px; max-width: 80vw; height: auto; background: white; padding: 8px; border-radius: 3px; }
+  #scan_video    { width: 280px; max-width: 80vw; border-radius: 3px; background: #000; }
+
+  /* Mobile: single column. The peer list + add-peer form stack above
+   * the chat instead of competing with it for horizontal space.
+   */
+  @media (max-width: 640px) {
+    body { padding: 0.5rem; max-width: 100%; }
+    h1 { font-size: 1rem; }
+    .topbar { flex-wrap: wrap; gap: 0.3rem; font-size: 0.78rem; }
+    .chat-grid {
+      grid-template-columns: 1fr;
+      gap: 0.5rem;
+    }
+    .peer-list { min-height: auto; max-height: 220px; }
+    .log { height: 42vh; }
+    .peer-entry .actions { display: flex; }   /* hover doesn't exist on touch */
+  }
 </style>
 </head>
 <body>
@@ -164,7 +200,8 @@
   <label>My public key (hex, 64 chars)</label>
   <div class="row">
     <input id="my_pk" type="text" placeholder="hex">
-    <button id="copy_my_pk_btn" type="button" title="Copy">Copy</button>
+    <button id="copy_my_pk_btn"   type="button" title="Copy">Copy</button>
+    <button id="show_qr_setup_btn" type="button" title="Show as QR code">QR</button>
   </div>
   <label>Server (host:port) — defaults to the same host that served this page</label>
   <input id="server" type="text">
@@ -181,7 +218,8 @@
     <div>
       <span id="me_label">me:</span>
       <span class="me-fp" id="me_fp"></span>
-      <button id="copy_my_pk_btn2" type="button" class="tiny" title="Copy my full public key">Copy pubkey</button>
+      <button id="copy_my_pk_btn2"  type="button" class="tiny" title="Copy my full public key">Copy pubkey</button>
+      <button id="show_qr_chat_btn" type="button" class="tiny" title="Show my public key as QR">QR</button>
     </div>
     <div class="small" id="info"></div>
     <button id="disconnect_btn" type="button" class="tiny">Disconnect</button>
@@ -196,7 +234,8 @@
       </div>
       <div class="row" style="margin-top: 0.3rem;">
         <input id="new_peer_pk" type="text" placeholder="Peer public key (hex)">
-        <button id="add_peer_btn" type="button">Add</button>
+        <button id="scan_peer_btn" type="button" title="Scan a QR code with the camera">Scan</button>
+        <button id="add_peer_btn"  type="button">Add</button>
       </div>
       <p class="small" id="peer_status"></p>
     </div>
@@ -214,14 +253,37 @@
   </div>
 </div>
 
+<!-- QR display + scan modals (hidden until used) -->
+<div id="qr_modal" class="modal hidden">
+  <div class="modal-content">
+    <h2>My public key</h2>
+    <div id="qr_display"></div>
+    <p class="small">Have your peer scan this with the <b>Scan</b> button on their side, or with their phone camera.</p>
+    <button id="qr_close_btn" type="button">Close</button>
+  </div>
+</div>
+
+<div id="scan_modal" class="modal hidden">
+  <div class="modal-content">
+    <h2>Scan peer's QR</h2>
+    <video id="scan_video" playsinline></video>
+    <p class="small" id="scan_status">Aim the camera at the peer's QR code.</p>
+    <button id="scan_close_btn" type="button">Cancel</button>
+  </div>
+</div>
+
 <script type="module">
 "use strict";
 
 /* libsodium-wrappers via jsDelivr's "+esm" autoconverter; top-level
  * await is supported in all current evergreen browsers, so handlers
  * registered below are guaranteed to see a ready sodium.
+ *
+ * qrcode generates the QR svg; qr-scanner runs the camera-side decoder.
  */
-import sodium from "https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/+esm";
+import sodium    from "https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/+esm";
+import QRCode    from "https://cdn.jsdelivr.net/npm/qrcode@1.5.4/+esm";
+import QrScanner from "https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/+esm";
 await sodium.ready;
 
 /* Register the service worker so the page can be "installed" as a PWA
@@ -574,6 +636,64 @@ const copyMyPk = () => {
 };
 $("copy_my_pk_btn").addEventListener("click", copyMyPk);
 $("copy_my_pk_btn2").addEventListener("click", copyMyPk);
+
+/* ---- QR display ----
+ * Renders my_pk as an SVG QR so the peer can scan it instead of typing
+ * 64 hex chars. Useful in the desktop->mobile direction (laptop shows
+ * QR, phone scans) and mobile->mobile.
+ */
+async function showMyQr() {
+  const pk = $("my_pk").value.trim();
+  if (!pk) {
+    setStatus("error", "Generate or paste a public key first.");
+    return;
+  }
+  const svg = await QRCode.toString(pk, { type: "svg", margin: 1, width: 280 });
+  $("qr_display").innerHTML = svg;
+  $("qr_modal").classList.remove("hidden");
+}
+$("show_qr_setup_btn").addEventListener("click", showMyQr);
+$("show_qr_chat_btn").addEventListener("click", showMyQr);
+$("qr_close_btn").addEventListener("click", () => $("qr_modal").classList.add("hidden"));
+
+/* ---- QR scanner ----
+ * Opens the camera viewfinder and pipes any decoded QR text straight
+ * into the "Peer public key" field. Requires camera permission (the
+ * browser asks once); requires HTTPS (ngrok / production already are).
+ */
+let activeScanner = null;
+async function openScanner() {
+  $("new_peer_pk").value = "";
+  $("scan_status").textContent = "Asking for camera permission…";
+  $("scan_modal").classList.remove("hidden");
+  try {
+    activeScanner = new QrScanner(
+      $("scan_video"),
+      (result) => {
+        $("new_peer_pk").value = result.data.trim();
+        $("scan_status").textContent = "Got it.";
+        closeScanner();
+        // Auto-focus the label field so the user can name them right away.
+        $("new_peer_label").focus();
+      },
+      { highlightScanRegion: true, highlightCodeOutline: true }
+    );
+    await activeScanner.start();
+    $("scan_status").textContent = "Aim the camera at the peer's QR code.";
+  } catch (e) {
+    $("scan_status").textContent = "Camera unavailable: " + (e?.message || e);
+  }
+}
+function closeScanner() {
+  if (activeScanner) {
+    activeScanner.stop();
+    activeScanner.destroy();
+    activeScanner = null;
+  }
+  $("scan_modal").classList.add("hidden");
+}
+$("scan_peer_btn").addEventListener("click", openScanner);
+$("scan_close_btn").addEventListener("click", closeScanner);
 
 /* Auto-trim hex inputs so stray whitespace from copy/paste/email
  * doesn't break parsing.

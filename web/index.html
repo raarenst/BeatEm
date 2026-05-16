@@ -154,6 +154,10 @@
     display: flex; align-items: center; justify-content: center;
     z-index: 100;
   }
+  /* Two-class selector beats the single-class `.modal` rule's
+   * `display: flex` regardless of stylesheet order, so .hidden
+   * actually hides the modal on initial load. */
+  .modal.hidden { display: none; }
   .modal-content {
     background: #1a1a1a;
     border: 1px solid #333;

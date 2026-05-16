@@ -411,21 +411,31 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        if (user_input[0] != '\n') {
-            if (strcmp(user_input, "&genkeys\n") == 0) {
-                gen_keys();
-            } else {
-                pthread_mutex_lock(&g_send_mtx);
-                /* Block (rather than spin) until the send thread has
-                 * consumed any previous message. */
-                while (send_buf_flag != 0) {
-                    pthread_cond_wait(&g_send_cv, &g_send_mtx);
-                }
-                memset(g_text_buffer, 0, g_text_size);
-                strncpy((char*)g_text_buffer, user_input, g_text_size - 1);
-                send_buf_flag = 1;
-                pthread_mutex_unlock(&g_send_mtx);
+        /* fgets keeps the trailing newline; strip it so it doesn't end
+         * up inside the encrypted plaintext and break the recipient's
+         * "---(...)---" display.
+         */
+        size_t len = strlen(user_input);
+        if (len > 0 && user_input[len - 1] == '\n') {
+            user_input[--len] = '\0';
+        }
+        if (len == 0) {
+            continue;
+        }
+
+        if (strcmp(user_input, "&genkeys") == 0) {
+            gen_keys();
+        } else {
+            pthread_mutex_lock(&g_send_mtx);
+            /* Block (rather than spin) until the send thread has
+             * consumed any previous message. */
+            while (send_buf_flag != 0) {
+                pthread_cond_wait(&g_send_cv, &g_send_mtx);
             }
+            memset(g_text_buffer, 0, g_text_size);
+            strncpy((char*)g_text_buffer, user_input, g_text_size - 1);
+            send_buf_flag = 1;
+            pthread_mutex_unlock(&g_send_mtx);
         }
     }
     free(user_input);

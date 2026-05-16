@@ -17,7 +17,13 @@ The `make clean` rule contains a known pre-existing bug — its `RMOBJ` substitu
 
 **Windows** (MinGW-w64): `build/makefile` hard-codes a path to `C:\Program Files\mingw-w64\x86_64-8.1.0-posix-seh-rt_v6-rev0\mingw64\bin\gcc.exe`. Adjust `CC`/`LINKER` if your toolchain lives elsewhere. It also expects a MinGW-built libsodium at `LIBSODIUM_DIR` (default `C:/libsodium`, with `include/sodium.h` and `lib/libsodium.a`). `build/make.bat` runs `mingw32-make.exe -f makefile all`. **The Windows build is currently untested after the libsodium migration.**
 
-There is no test suite, no linter config, and no formatter config. A bash-driven end-to-end smoke test lives in `/tmp/smoke_test.sh` during development — run server + two clients and verify reciprocal message delivery.
+**Tests** live in `tests/` and run via the makefile:
+```
+make test         # unit tests + end-to-end smoke test
+make test-unit    # just the unit tests (no server/client needed)
+make test-smoke   # just the smoke test (requires `make all`)
+```
+`tests/test_unit.c` exercises `crypto_seal`/`crypto_open` (round-trip + 4 failure modes), `proto_handshake_encode`/`_decode` (round-trip + bad magic / bad version), hex helpers, and `proto_counter_check_and_update` (the replay-protection logic). `tests/smoke_test.sh` brings up the server plus two clients with fresh keypairs and asserts reciprocal message delivery. No linter or formatter config is checked in.
 
 **Docker (server)**: `docker/server/Dockerfile` builds an Ubuntu image exposing port 27015. It installs `libsodium23` at runtime and copies in a pre-built `beatem_server` binary, so build the binary on a Linux host first, then drop it next to the Dockerfile before `docker build`.
 

@@ -18,6 +18,9 @@ BABEL_INCLUDE	:= ../babel/include
 # ----- Files -----
 EXE := $(BINDIR)/beatem_server
 EXE_CLIENT := $(BINDIR)/beatem_client
+EXE_KEYGEN := $(BINDIR)/beatem_keygen
+EXE_TEST_UNIT := $(BINDIR)/test_unit
+TESTDIR := ../tests
 
 SRC := ../source/beatem_server.c
 SRC += ../source/crypto.c
@@ -47,9 +50,27 @@ CFLAGS	 := -Wall -pthread
 LDFLAGS  := -Llib 
 LDLIBS   := -lm -lpthread -lsodium
 
-.PHONY: all clean remove
+.PHONY: all clean remove test test-unit test-smoke
 
-all: $(EXE) $(EXE_CLIENT) 
+all: $(EXE) $(EXE_CLIENT)
+
+# Build + run all tests
+test: test-unit test-smoke
+
+# Unit tests link against crypto.o + protocol.o (no babel, no app code)
+test-unit: $(EXE_TEST_UNIT)
+	@./$(EXE_TEST_UNIT)
+
+$(EXE_TEST_UNIT): $(TESTDIR)/test_unit.c $(OBJDIR)/crypto.o $(OBJDIR)/protocol.o | $(BINDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+# Smoke test: runs the server + 2 clients via the shell script
+test-smoke: $(EXE) $(EXE_CLIENT) $(EXE_KEYGEN)
+	@bash $(TESTDIR)/smoke_test.sh
+
+$(EXE_KEYGEN): $(TESTDIR)/beatem_keygen.c | $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
+
 
 disp:
 	@echo $(RMOBJ)

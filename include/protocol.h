@@ -45,4 +45,17 @@ void proto_handshake_encode(uint8_t *buf, const proto_handshake_t *h);
  */
 int proto_handshake_decode(const uint8_t *buf, proto_handshake_t *h);
 
+/* Replay-protection check. `plaintext` is the decrypted payload of an
+ * authenticated packet (layout: [sender_pk (32)][counter (4 BE)][text]).
+ * Parses the embedded counter and compares against *highest_seen.
+ *
+ *   returns 1 (and updates *highest_seen) if the counter is strictly
+ *           greater than the previously seen value — i.e., the packet
+ *           should be processed.
+ *   returns 0 if the counter is <= *highest_seen — i.e., the packet
+ *           is a replay or reorder and should be dropped.
+ */
+int proto_counter_check_and_update(const uint8_t *plaintext,
+                                   uint32_t *highest_seen);
+
 #endif /* _PROTOCOL_H_ */

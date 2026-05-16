@@ -11,6 +11,9 @@
 # Built binaries (rebuild from source)
 build_linux/beatem_server
 build_linux/beatem_client
+build_linux/beatem_keygen
+build_linux/test_unit
+build_linux/test_unit.d
 build/beatem_server.exe
 build/beatem_client.exe
 

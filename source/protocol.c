@@ -1,4 +1,5 @@
 
+#include "crypto.h"
 #include "protocol.h"
 
 void proto_handshake_encode(uint8_t *buf, const proto_handshake_t *h) {
@@ -41,4 +42,18 @@ int proto_handshake_decode(const uint8_t *buf, proto_handshake_t *h) {
                             ((uint32_t)buf[14] << 8)  |
                              (uint32_t)buf[15];
     return 0;
+}
+
+int proto_counter_check_and_update(const uint8_t *plaintext,
+                                   uint32_t *highest_seen) {
+    const uint8_t *cbytes = plaintext + CLIENT_KEY_SIZE;
+    uint32_t pkt_counter = ((uint32_t)cbytes[0] << 24) |
+                           ((uint32_t)cbytes[1] << 16) |
+                           ((uint32_t)cbytes[2] <<  8) |
+                            (uint32_t)cbytes[3];
+    if (pkt_counter <= *highest_seen) {
+        return 0;
+    }
+    *highest_seen = pkt_counter;
+    return 1;
 }

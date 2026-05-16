@@ -243,20 +243,12 @@ void *receive_thread_func(void *arg) {
             if (memcmp(g_recv_plaintext, my_pk, CLIENT_KEY_SIZE) == 0) {
                 continue;
             }
-            /* Replay-protection check. Parse the embedded counter
-             * (big-endian uint32 after the sender_pk) and require
-             * strict-greater than the last counter we accepted.
-             * Rejects replays of captured packets and any reorderings.
+            /* Replay-protection check — see project_protocol_understanding
+             * and the wire format diagram in CLAUDE.md.
              */
-            uint8_t *cbytes = g_recv_plaintext + CLIENT_KEY_SIZE;
-            uint32_t pkt_counter = ((uint32_t)cbytes[0] << 24) |
-                                   ((uint32_t)cbytes[1] << 16) |
-                                   ((uint32_t)cbytes[2] <<  8) |
-                                    (uint32_t)cbytes[3];
-            if (pkt_counter <= g_recv_counter) {
+            if (!proto_counter_check_and_update(g_recv_plaintext, &g_recv_counter)) {
                 continue;
             }
-            g_recv_counter = pkt_counter;
 
             uint8_t *text = g_recv_plaintext + CLIENT_KEY_SIZE + CLIENT_COUNTER_SIZE;
             text[g_text_size - 1] = '\0';

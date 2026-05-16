@@ -8,9 +8,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
+#include <sys/socket.h>
 
 #include "crypto.h"
 #include "protocol.h"
+#include "ws.h"
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -171,6 +174,59 @@ static void test_replay_counter(void) {
     CHECK(highest == 0x12345678, "big-endian byte order parsed correctly");
 }
 
+/* Exercise ws_send_binary / ws_recv_binary via a Unix-domain socketpair.
+ * Covers the short-form (<126), 16-bit extended length (>=126), masked
+ * (client->server) and unmasked (server->client) framing paths.
+ */
+static void test_ws_frame_roundtrip(void) {
+    printf("test_ws_frame_roundtrip:\n");
+
+    /* Fill a reference payload with a non-trivial bit pattern so any
+     * single-byte mask/length error shows up immediately. */
+    uint8_t ref[2048];
+    for (size_t i = 0; i < sizeof(ref); i++) ref[i] = (uint8_t)(i ^ 0x5A);
+
+    size_t sizes[] = {1, 125, 126, 200, 2048};
+    const char *labels[] = {"len=1", "len=125 (short max)", "len=126 (u16 boundary)",
+                            "len=200", "len=2048 (broadcast size)"};
+
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        int fds[2];
+        if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+            g_fail++;
+            printf("  FAIL: socketpair (%s)\n", labels[i]);
+            continue;
+        }
+        uint8_t out[2048];
+        char msg[128];
+
+        /* server -> client: unmasked */
+        int sent = ws_send_binary(fds[0], ref, sizes[i], 0);
+        snprintf(msg, sizeof(msg), "server send returns header+payload bytes (%s)", labels[i]);
+        CHECK(sent > 0 && (size_t)sent >= sizes[i], msg);
+
+        int got = ws_recv_binary(fds[1], out, sizeof(out));
+        snprintf(msg, sizeof(msg), "client recv returns payload length (%s)", labels[i]);
+        CHECK((size_t)got == sizes[i], msg);
+        snprintf(msg, sizeof(msg), "unmasked round-trip preserves bytes (%s)", labels[i]);
+        CHECK(memcmp(out, ref, sizes[i]) == 0, msg);
+
+        /* client -> server: masked */
+        sent = ws_send_binary(fds[1], ref, sizes[i], 1);
+        snprintf(msg, sizeof(msg), "client send (masked) returns header+payload bytes (%s)", labels[i]);
+        CHECK(sent > 0 && (size_t)sent >= sizes[i] + 4 /* mask key */, msg);
+
+        got = ws_recv_binary(fds[0], out, sizeof(out));
+        snprintf(msg, sizeof(msg), "server recv returns payload length (%s)", labels[i]);
+        CHECK((size_t)got == sizes[i], msg);
+        snprintf(msg, sizeof(msg), "masked round-trip preserves bytes (%s)", labels[i]);
+        CHECK(memcmp(out, ref, sizes[i]) == 0, msg);
+
+        close(fds[0]);
+        close(fds[1]);
+    }
+}
+
 int main(void) {
     if (crypto_init() != 0) {
         fprintf(stderr, "crypto_init failed\n");
@@ -181,6 +237,7 @@ int main(void) {
     test_crypto_seal_open_roundtrip();
     test_handshake_roundtrip();
     test_replay_counter();
+    test_ws_frame_roundtrip();
 
     printf("\nTotal: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

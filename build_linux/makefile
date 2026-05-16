@@ -25,9 +25,11 @@ TESTDIR := ../tests
 SRC := ../source/beatem_server.c
 SRC += ../source/crypto.c
 SRC += ../source/protocol.c
+SRC += ../source/ws.c
 CLIENT_SRC := ../source/beatem_client.c
 CLIENT_SRC += ../source/crypto.c
 CLIENT_SRC += ../source/protocol.c
+CLIENT_SRC += ../source/ws.c
 
 BSRC := $(BABEL_ARCH)/babelsock.c
 BSRC += $(BABEL_ARCH)/babelthread.c
@@ -61,7 +63,7 @@ test: test-unit test-smoke
 test-unit: $(EXE_TEST_UNIT)
 	@./$(EXE_TEST_UNIT)
 
-$(EXE_TEST_UNIT): $(TESTDIR)/test_unit.c $(OBJDIR)/crypto.o $(OBJDIR)/protocol.o | $(BINDIR)
+$(EXE_TEST_UNIT): $(TESTDIR)/test_unit.c $(OBJDIR)/crypto.o $(OBJDIR)/protocol.o $(OBJDIR)/ws.o | $(BINDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 # Smoke test: runs the server + 2 clients via the shell script

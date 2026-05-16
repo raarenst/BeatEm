@@ -14,6 +14,14 @@ static void remove_client(int sock);
 
 static char g_recvbuf[CLIENT_PACKET_SIZE];
 static int g_client_list[SERVER_MAX_NR_OF_CLIENTS];
+/* Per-client packet count for the current heartbeat. Cap = 1; any
+ * additional packet from the same client within the same flush window
+ * is silently dropped. Without this cap, a misbehaving client could
+ * fill the broadcast buffer and force an early flush, which would
+ * leak timing to network observers and break the constant-cadence
+ * privacy property.
+ */
+static int g_client_packets[SERVER_MAX_NR_OF_CLIENTS];
 static int g_nr_clients;
 static char g_sendbuf[SERVER_PACKET_SIZE];
 static int g_nr_packets;
@@ -48,6 +56,7 @@ int main(void) {
   g_nr_clients = 0;
   for (int idx = 0; idx < SERVER_MAX_NR_OF_CLIENTS; idx++) {
     g_client_list[idx] = 0;
+    g_client_packets[idx] = 0;
   }
 
   start_time_s = babelTimeGetCurrentTime();
@@ -82,6 +91,12 @@ int main(void) {
     if (babelTimeGetCurrentTime() >= (start_time_s + SERVER_HEART_BEAT_S)) {
       send_buffer();
       g_nr_packets = 0;
+      /* Reset per-client packet counters for the next heartbeat
+       * window. Each client gets one slot in the upcoming broadcast.
+       */
+      for (int idy = 0; idy < SERVER_MAX_NR_OF_CLIENTS; idy++) {
+        g_client_packets[idy] = 0;
+      }
       start_time_s = babelTimeGetCurrentTime();
     }
 
@@ -112,6 +127,7 @@ int main(void) {
             for (int idy = 0; idy < SERVER_MAX_NR_OF_CLIENTS; idy++) {
               if (g_client_list[idy] == 0) {
                 g_client_list[idy] = new_sock;
+                g_client_packets[idy] = 0;
                 g_nr_clients++;
                 added = 1;
                 break;
@@ -136,20 +152,27 @@ int main(void) {
             babelSockClose(select_list[idx]);
             remove_client(select_list[idx]);
           } else {
-
-            /* Add buf to send buffer
+            /* Find the client's slot so we can check + bump its per-
+             * heartbeat counter. Drop the packet if the client has
+             * already sent in this window — protects the constant-
+             * cadence property against misbehaving senders.
              */
-            if (g_nr_packets == SERVER_MAX_NR_OF_PACKETS) {
-              /* Buffer full — flush before adding the new packet.
-               * FIXME: should rate-limit spammy clients.
-               */
-              send_buffer();
-              g_nr_packets = 0;
+            int slot = -1;
+            for (int idy = 0; idy < SERVER_MAX_NR_OF_CLIENTS; idy++) {
+              if (g_client_list[idy] == select_list[idx]) {
+                slot = idy;
+                break;
+              }
             }
-            for (int idy = 0; idy < CLIENT_PACKET_SIZE; idy++) {
-              g_sendbuf[g_nr_packets * CLIENT_PACKET_SIZE + idy] = g_recvbuf[idy];
+            if (slot >= 0 && g_client_packets[slot] < 1) {
+              g_client_packets[slot]++;
+              memcpy(g_sendbuf + g_nr_packets * CLIENT_PACKET_SIZE,
+                     g_recvbuf, CLIENT_PACKET_SIZE);
+              g_nr_packets++;
             }
-            g_nr_packets++;
+            /* else: client is spamming or the socket somehow isn't in
+             * our list — silently drop, do not flush early.
+             */
           }
         }
       }
@@ -166,6 +189,7 @@ static void remove_client(int sock) {
   for (int idy = 0; idy < SERVER_MAX_NR_OF_CLIENTS; idy++) {
     if (g_client_list[idy] == sock) {
       g_client_list[idy] = 0;
+      g_client_packets[idy] = 0;
       g_nr_clients--;
       break;
     }
@@ -193,6 +217,7 @@ int send_buffer() {
       printf("Client write error: %d\n", res);
       babelSockClose(g_client_list[idx]);
       g_client_list[idx] = 0;
+      g_client_packets[idx] = 0;
       g_nr_clients--;
     }
   }

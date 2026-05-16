@@ -89,9 +89,13 @@
   <p class="small" id="info"></p>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/dist/browsers/sodium.js"></script>
-<script>
-"use strict";
+<script type="module">
+/* libsodium-wrappers no longer ships a pre-built browser bundle, so we
+ * pull the CommonJS module through jsDelivr's "+esm" autoconverter and
+ * use top-level `await` (supported in all current evergreen browsers).
+ */
+import sodium from "https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/+esm";
+await sodium.ready;
 
 /* ---- Protocol constants (must match include/crypto.h + protocol.h) ---- */
 const NONCE_SIZE        = 24;
@@ -238,18 +242,16 @@ function handleBroadcast(buf) {
   }
 }
 
-/* ---- Wiring ---- */
-$("gen_btn").addEventListener("click", async () => {
-  await sodium.ready;
+/* ---- Wiring (sodium is already ready — see top-level await above) ---- */
+$("gen_btn").addEventListener("click", () => {
   const kp = sodium.crypto_box_keypair();
-  $("my_sk").value  = toHex(kp.privateKey);
-  $("my_pk").value  = toHex(kp.publicKey);
+  $("my_sk").value = toHex(kp.privateKey);
+  $("my_pk").value = toHex(kp.publicKey);
   setStatus("ok",
     "New keypair generated. Share the public key with your peer out-of-band.");
 });
 
-$("connect_btn").addEventListener("click", async () => {
-  await sodium.ready;
+$("connect_btn").addEventListener("click", () => {
   try {
     mySK   = fromHex($("my_sk").value);
     myPK   = fromHex($("my_pk").value);

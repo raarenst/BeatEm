@@ -1,21 +1,31 @@
-# BeatEm how-to
+# BeatEm
 
-## Server
-```
-> docker pull REDACTED/bruno_server:latest
-> docker run -dp 27015:27015 REDACTED/bruno_server
-```
+A privacy-preserving chat protocol whose goal is not just *what you
+say* but *who you talk to*: every client emits fixed-size packets on a
+fixed schedule (real or random padding), and the server broadcasts
+the union to everyone, so a network observer can't tell who's talking.
 
-## Clients
+End-to-end encryption is libsodium `crypto_box` (X25519 + XSalsa20 +
+Poly1305) with monotonic replay-counter protection. Cover packets are
+indistinguishable from real ciphertext on the wire.
 
-Each client needs an X25519 keypair (32 bytes each, hex-encoded). Generate
-keypairs out-of-band and share the public keys with your peer.
+## Three clients, one protocol
 
-```
-> beatem_client.exe <my_secret_hex> <my_public_hex> <peer_public_hex> [server_ip]
-```
+- **Linux CLI** — `beatem_client` (`source/beatem_client.c`)
+- **Web / PWA** — `web/index.html` (vanilla JS + libsodium.js, served
+  by `beatem_server` itself on the same TCP port as the WebSocket;
+  installable to a phone home screen)
+- The Windows CLI is currently broken pending a winsock port.
 
-The two ends are launched with reciprocal keys so each can decrypt the other.
+## Get started
+
+See **[USERS_GUIDE.md](USERS_GUIDE.md)** for the full walk-through:
+prerequisites, starting the server, exposing it via ngrok / LAN /
+public internet, connecting with the CLI, the web, the PWA, and
+adding peers.
+
+For developers, **[CLAUDE.md](CLAUDE.md)** has the build instructions,
+architecture overview, and conventions.
 
 # BeatEm background
 BeatEm is a chat system with the intention of beeing private. While many chats services can provide encrypted messages, it is still possible to map networks and who is speaking with who. Even onion routing and other attemtps can with sufficient resources be traced.

@@ -385,10 +385,17 @@ int ws_send_binary(int sock, const uint8_t *payload, size_t len, int is_client) 
 
     if (len < 126) {
         header[hlen++] = (uint8_t)(is_client ? 0x80 : 0x00) | (uint8_t)len;
-    } else {
+    } else if (len <= 0xFFFF) {
         header[hlen++] = (uint8_t)(is_client ? 0x80 : 0x00) | 126;
         header[hlen++] = (uint8_t)((len >> 8) & 0xFF);
         header[hlen++] = (uint8_t)(len & 0xFF);
+    } else {
+        /* 64-bit extended length for payloads > 65535 bytes. */
+        header[hlen++] = (uint8_t)(is_client ? 0x80 : 0x00) | 127;
+        uint64_t l64 = (uint64_t)len;
+        for (int i = 7; i >= 0; i--) {
+            header[hlen++] = (uint8_t)((l64 >> (i * 8)) & 0xFF);
+        }
     }
 
     uint8_t mask[4] = {0};

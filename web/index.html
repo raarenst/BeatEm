@@ -855,10 +855,16 @@ function connect() {
 
       const upBps   = Math.round(pktSize * 1000 / heartbeatMs);
       const downBps = Math.round(pktSize * maxClients * 1000 / heartbeatMs);
+      /* SI units (kB = 1000 B) — network rates traditionally use SI. */
+      const fmtBps = (bps) => {
+        if (bps < 1000)    return `${bps} B/s`;
+        if (bps < 1000000) return `${(bps / 1000).toFixed(1)} kB/s`;
+        return                    `${(bps / 1000000).toFixed(1)} MB/s`;
+      };
       $("warn_server").textContent = `${serverHost} (${wsScheme}://)`;
       $("warn_params").textContent =
         `cadence ${heartbeatMs} ms · slot ${pktSize} B · max ${maxClients} clients · ` +
-        `message budget ${textSize} B · ↑${upBps} B/s · ↓${downBps} B/s`;
+        `message budget ${textSize} B · ↑${fmtBps(upBps)} · ↓${fmtBps(downBps)}`;
       setStatus("ok", `Connected to server: ${serverHost}`);
 
       if (heartbeatTimer) clearInterval(heartbeatTimer);

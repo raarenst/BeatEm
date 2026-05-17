@@ -22,7 +22,11 @@
  * (nginx, caddy) if you need it.
  */
 
-#define WS_MAX_PAYLOAD  65535u
+/* Max payload accepted on either side. Covers the largest broadcast the
+ * server can ever produce (max-clients 1024 × packet-size 65535 ≈ 64 MiB).
+ * The wire format itself supports up to 2^63-1 bytes via the 64-bit
+ * extended-length frame. */
+#define WS_MAX_PAYLOAD  (64u * 1024u * 1024u)
 
 /* Server side: handle one incoming HTTP request and dispatch it.
  *

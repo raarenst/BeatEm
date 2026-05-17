@@ -335,16 +335,23 @@ int ws_client_handshake(int sock, const char *host, int port) {
     sodium_bin2base64(key_b64, sizeof(key_b64), key_bytes, sizeof(key_bytes),
                       sodium_base64_VARIANT_ORIGINAL);
 
+    /* IPv6 literals must be bracketed in the Host header (RFC 7230). */
+    const char *host_fmt = strchr(host, ':') ? "[%s]:%d" : "%s:%d";
+    char host_hdr[300];
+    if (snprintf(host_hdr, sizeof(host_hdr), host_fmt, host, port) >= (int)sizeof(host_hdr)) {
+        return -1;
+    }
+
     char req[512];
     int n = snprintf(req, sizeof(req),
         "GET / HTTP/1.1\r\n"
-        "Host: %s:%d\r\n"
+        "Host: %s\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         "Sec-WebSocket-Key: %s\r\n"
         "Sec-WebSocket-Version: 13\r\n"
         "\r\n",
-        host, port, key_b64);
+        host_hdr, key_b64);
     if (n < 0 || (size_t)n >= sizeof(req)) return -1;
     if (write_exact(sock, (const uint8_t*)req, (size_t)n) != 0) return -1;
 

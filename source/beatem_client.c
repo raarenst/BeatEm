@@ -326,8 +326,8 @@ static void usage(const char *prog) {
 }
 
 /* Open a TCP connection to host:port. Returns the connected socket fd
- * on success, -1 on failure. Resolves hostnames via getaddrinfo so
- * both IPv4 numeric strings and DNS names work.
+ * on success, -1 on failure. Resolves hostnames via getaddrinfo with
+ * AF_UNSPEC so both IPv4 and IPv6 (numeric or DNS) work.
  */
 static int tcp_connect(const char *host, int port) {
     char port_str[16];
@@ -335,7 +335,7 @@ static int tcp_connect(const char *host, int port) {
 
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family   = AF_INET;
+    hints.ai_family   = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
     if (getaddrinfo(host, port_str, &hints, &res) != 0 || res == NULL) {
@@ -389,16 +389,44 @@ int main(int argc, char *argv[]) {
     } else {
         strcpy(g_server_url, "127.0.0.1");
     }
-    /* Optional ":port" suffix lets the user reach a server that's
-     * running on a non-default port. */
-    char *colon = strrchr(g_server_url, ':');
-    if (colon) {
-        *colon = '\0';
-        server_port = atoi(colon + 1);
-        if (server_port <= 0 || server_port > 65535) {
-            printf("Invalid port in server arg.\n");
+    /* Accepted forms:
+     *   host              host alone, default port
+     *   host:port         IPv4 / DNS with explicit port (single colon)
+     *   [v6]              IPv6 literal in brackets, default port
+     *   [v6]:port         IPv6 literal in brackets with explicit port
+     *   v6literal         IPv6 literal (>=2 colons), default port
+     */
+    if (g_server_url[0] == '[') {
+        char *rbracket = strchr(g_server_url, ']');
+        if (!rbracket) {
+            printf("Invalid bracketed host in server arg.\n");
             return -1;
         }
+        *rbracket = '\0';
+        memmove(g_server_url, g_server_url + 1, strlen(g_server_url + 1) + 1);
+        const char *tail = rbracket + 1;
+        if (*tail == ':') {
+            server_port = atoi(tail + 1);
+            if (server_port <= 0 || server_port > 65535) {
+                printf("Invalid port in server arg.\n");
+                return -1;
+            }
+        } else if (*tail != '\0') {
+            printf("Trailing junk after bracketed host.\n");
+            return -1;
+        }
+    } else {
+        char *first = strchr(g_server_url, ':');
+        char *last  = strrchr(g_server_url, ':');
+        if (first && first == last) {
+            *first = '\0';
+            server_port = atoi(first + 1);
+            if (server_port <= 0 || server_port > 65535) {
+                printf("Invalid port in server arg.\n");
+                return -1;
+            }
+        }
+        /* Multiple colons → bare IPv6 literal, no port; default applies. */
     }
 
     send_buf_flag = 0;

@@ -265,7 +265,7 @@ static int send_handshake(int sock) {
 }
 
 static int create_server(uint16_t port) {
-  int server_sock = socket(AF_INET, SOCK_STREAM, 0);
+  int server_sock = socket(AF_INET6, SOCK_STREAM, 0);
   if (server_sock < 0) {
     printf("*** ERROR: socket: %s\n", strerror(errno));
     return -1;
@@ -276,11 +276,18 @@ static int create_server(uint16_t port) {
     close(server_sock);
     return -1;
   }
-  struct sockaddr_in addr;
+  /* Dual-stack: one v6 listener accepts native v6 and v4-mapped clients. */
+  int off = 0;
+  if (setsockopt(server_sock, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
+    printf("*** ERROR: setsockopt(IPV6_V6ONLY=0): %s\n", strerror(errno));
+    close(server_sock);
+    return -1;
+  }
+  struct sockaddr_in6 addr;
   memset(&addr, 0, sizeof(addr));
-  addr.sin_family      = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  addr.sin_port        = htons(port);
+  addr.sin6_family = AF_INET6;
+  addr.sin6_addr   = in6addr_any;
+  addr.sin6_port   = htons(port);
   if (bind(server_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
     printf("*** ERROR: bind(%u): %s\n", port, strerror(errno));
     close(server_sock);

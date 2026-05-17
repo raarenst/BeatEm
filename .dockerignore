@@ -2,13 +2,12 @@
 # actually COPYs reaches the daemon, but we still exclude these to prevent
 # accidental cache busts when unrelated files change.
 
-# Build artefacts
-build_linux/obj/
-build_linux/beatem_server
-build_linux/beatem_client
-build_linux/beatem_keygen
-build_linux/test_unit
-build/
+# Build artefacts (host-built binaries shouldn't enter the container).
+build/obj/
+build/beatem_server
+build/beatem_client
+build/beatem_keygen
+build/test_unit
 
 # Stale Docker artefacts from older single-stage workflow
 docker/server/beatem_server

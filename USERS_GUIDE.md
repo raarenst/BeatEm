@@ -24,12 +24,12 @@ sudo apt install build-essential libsodium-dev xxd
 Then build everything:
 
 ```sh
-cd build_linux
+cd build
 make all          # builds beatem_server and beatem_client
 make test         # optional: 60 unit + 2 smoke tests
 ```
 
-You should now have two binaries in `build_linux/`:
+You should now have two binaries in `build/`:
 
 ```
 beatem_server   # the broadcast hub
@@ -46,7 +46,7 @@ itself — no separate web server needed.
 In one terminal:
 
 ```sh
-cd build_linux
+cd build
 ./beatem_server
 ```
 
@@ -191,7 +191,7 @@ web client (see §5).
 A test helper is built alongside the binaries:
 
 ```sh
-cd build_linux
+cd build
 ./beatem_keygen
 ```
 

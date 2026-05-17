@@ -10,13 +10,11 @@
 **/obj/*.h
 
 # Built binaries (rebuild from source)
-build_linux/beatem_server
-build_linux/beatem_client
-build_linux/beatem_keygen
-build_linux/test_unit
-build_linux/test_unit.d
-build/beatem_server.exe
-build/beatem_client.exe
+build/beatem_server
+build/beatem_client
+build/beatem_keygen
+build/test_unit
+build/test_unit.d
 
 # Keep the obj/ dirs themselves (they have a .gitignore stub)
 !**/obj/.gitignore

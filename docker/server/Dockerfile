@@ -31,10 +31,10 @@ WORKDIR /src
 COPY include/ ./include/
 COPY source/  ./source/
 COPY web/     ./web/
-COPY build_linux/makefile ./build_linux/makefile
+COPY build/makefile ./build/makefile
 
 # Build only the server (skip CLI client and tests).
-RUN cd build_linux && make ./beatem_server
+RUN cd build && make ./beatem_server
 
 # ----- Runtime stage -----
 FROM ubuntu:24.04 AS runtime
@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsodium23 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /src/build_linux/beatem_server /usr/local/bin/beatem_server
+COPY --from=builder /src/build/beatem_server /usr/local/bin/beatem_server
 
 EXPOSE 27015/tcp
 ENTRYPOINT ["beatem_server"]

@@ -5,7 +5,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-BIN_DIR="$SCRIPT_DIR/../build_linux"
+BIN_DIR="$SCRIPT_DIR/../build"
 SERVER="$BIN_DIR/beatem_server"
 CLIENT="$BIN_DIR/beatem_client"
 KEYGEN="$BIN_DIR/beatem_keygen"

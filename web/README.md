@@ -10,7 +10,7 @@ can install it to a phone home screen and launch it like a native app.
 the same TCP port as the WebSocket. So you only need one process:
 
 ```
-cd build_linux && ./beatem_server
+cd build && ./beatem_server
 # then open http://localhost:27015/ in a browser
 ```
 
@@ -81,5 +81,5 @@ the protocol exists to hide.
 | `icon-192.png`, `icon-512.png`, `apple-touch-icon.png` | app icons |
 
 All of these are embedded into `beatem_server` at build time via
-`xxd -i` (see `build_linux/makefile`), so a single binary serves the
+`xxd -i` (see `build/makefile`), so a single binary serves the
 PWA over the same TCP port as the WebSocket.

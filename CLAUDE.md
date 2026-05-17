@@ -9,7 +9,7 @@ Two C executables — `beatem_server` and `beatem_client` — share the same sou
 **Linux** (uses system `gcc` and `libsodium-dev`):
 ```
 sudo apt install libsodium-dev    # one-time
-cd build_linux && make all        # builds both binaries into build_linux/
+cd build && make all        # builds both binaries into build/
 make clean                        # removes obj/*.o and *.d
 make remove                       # also removes the executable
 ```
@@ -38,7 +38,7 @@ Each client key is 64 hex chars (32 bytes). Generate keypairs out-of-band with l
 
 **Web client** (`web/index.html`): single static page using `libsodium-wrappers` via CDN and the browser's native `WebSocket`. `beatem_server` embeds this file at build time (via the makefile's `xxd -i` rule into `obj/web_index.h`) and serves it on the same TCP port as the WebSocket — `GET /` returns the page, `GET / Upgrade: websocket` upgrades. So:
 ```
-cd build_linux && ./beatem_server
+cd build && ./beatem_server
 # open http://localhost:27015/ in a browser
 ```
 The JS picks up the WebSocket host/scheme from `location` automatically, so the same page works locally, behind a reverse proxy (Caddy), or through a tunnel (ngrok / Cloudflare Tunnel) without changes.

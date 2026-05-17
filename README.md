@@ -37,7 +37,7 @@ how often, which often reveals more than the messages.
 
 ```sh
 sudo apt install build-essential libsodium-dev xxd
-git clone <this-repo> beatem && cd beatem
+git clone https://github.com/raarenst/BeatEm.git && cd BeatEm
 cd build && make all
 ./beatem_server
 # open http://localhost:27015/ in any browser

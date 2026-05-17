@@ -1,0 +1,29 @@
+# Keep the Docker build context lean: only what `docker/server/Dockerfile`
+# actually COPYs reaches the daemon, but we still exclude these to prevent
+# accidental cache busts when unrelated files change.
+
+# Build artefacts
+build_linux/obj/
+build_linux/beatem_server
+build_linux/beatem_client
+build_linux/beatem_keygen
+build_linux/test_unit
+build/
+
+# Stale Docker artefacts from older single-stage workflow
+docker/server/beatem_server
+
+# VCS + IDE noise
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+
+# Docs and tests aren't needed at build time
+README.md
+USERS_GUIDE.md
+CLAUDE.md
+REQS.md
+tests/
+docs/

@@ -47,11 +47,36 @@ The server bundles the web client (installable as a PWA) on the same
 TCP port as the WebSocket — no separate web server, no static-file
 hosting. A terminal client `beatem_client` is also built.
 
-For LAN / ngrok / Docker / VPS deployment, the PWA install, QR-based
-peer exchange, and CLI usage, see **[USERS_GUIDE.md](USERS_GUIDE.md)**.
+For LAN / ngrok / VPS deployment, the PWA install, QR-based peer
+exchange, and CLI usage, see **[USERS_GUIDE.md](USERS_GUIDE.md)**.
 
 For architecture, wire format, threading model, and contribution
 conventions, see **[CLAUDE.md](CLAUDE.md)**.
+
+## Deploy with Docker
+
+A multi-stage `Dockerfile` builds `beatem_server` from source inside
+the image — no host build step needed. Run from the repo root:
+
+```sh
+docker build -f docker/server/Dockerfile -t beatem-server .
+docker run --rm -p 27015:27015 beatem-server
+```
+
+With a bind-mounted config file:
+
+```sh
+docker run --rm -p 27015:27015 \
+  -v "$PWD/beatem_server.conf:/etc/beatem/server.conf:ro" \
+  beatem-server --config /etc/beatem/server.conf
+```
+
+For multi-arch images (amd64 + arm64):
+
+```sh
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f docker/server/Dockerfile -t beatem-server .
+```
 
 ## How it works (short version)
 

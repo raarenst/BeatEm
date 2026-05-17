@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#111111">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -25,6 +25,13 @@
     margin-inline: auto;
   }
   h1 { font-size: 1.1rem; color: #eee; margin: 0 0 0.4rem; }
+  .logo {
+    width: 1.6em;
+    height: 1.6em;
+    vertical-align: -0.4em;
+    margin-right: 0.3em;
+    color: #eee;
+  }
   label { display: block; margin-top: 0.6rem; font-size: 0.82rem; color: #aaa; }
   input[type="text"], textarea {
     width: 100%;
@@ -50,6 +57,22 @@
   button.primary:hover { background: #4d6; }
   button.danger  { background: #b44; color: #fff; border-color: #b44; }
   button.tiny    { font-size: 0.75rem; padding: 0.2rem 0.5rem; }
+  button.warn    { background: #5a3a14; color: #fc8; border-color: #7a4e1d; }
+  button.warn:hover { background: #6a4818; }
+  .warn-box {
+    margin-top: 0.5rem;
+    border: 1px solid #5a3a14;
+    background: #1f1610;
+    color: #ddd;
+    padding: 0.7rem 0.9rem;
+    border-radius: 3px;
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+  .warn-box h3 { font-size: 0.82rem; margin: 0.6rem 0 0.2rem; color: #fc8; }
+  .warn-box h3:first-child { margin-top: 0; }
+  .warn-box ul { margin: 0.2rem 0 0.4rem; padding-left: 1.1rem; }
+  .warn-box .params { color: #aaa; }
   .row { display: flex; gap: 0.4rem; align-items: center; }
   .row > input { flex: 1; }
   #status { color: #888; margin-top: 0.5rem; font-size: 0.85rem; }
@@ -190,43 +213,54 @@
 </head>
 <body>
 
-<h1>BeatEm — web client</h1>
-<p class="small">
-  Privacy-preserving chat. Every client emits fixed-size packets at a
-  fixed cadence; the server broadcasts the union to everyone. Cover
-  packets are indistinguishable from real ones on the wire.
-</p>
-
-<!-- ===== Setup ===== -->
-<div id="setup">
-  <label>My secret key (hex, 64 chars)</label>
-  <input id="my_sk" type="text" placeholder="hex">
-  <label>My public key (hex, 64 chars)</label>
-  <div class="row">
-    <input id="my_pk" type="text" placeholder="hex">
-    <button id="copy_my_pk_btn"   type="button" title="Copy">Copy</button>
-    <button id="show_qr_setup_btn" type="button" title="Show as QR code">QR</button>
-  </div>
-  <label>Server (host:port) — defaults to the same host that served this page</label>
-  <input id="server" type="text">
-  <div class="row" style="margin-top: 0.6rem;">
-    <button id="gen_btn" type="button">Generate new keypair</button>
-    <button id="connect_btn" type="button" class="primary">Connect</button>
-  </div>
-  <p id="status"></p>
-</div>
+<h1>
+  <svg class="logo" viewBox="0 0 24 24" aria-hidden="true">
+    <!-- Heart, skewed -8° on the Y axis so the right side rides higher
+         than the left, then translated down to keep it in the viewBox. -->
+    <path fill="#e33" transform="skewY(-8) translate(0 2.5)"
+          d="M12 21 C8 17 3 13 3 8 C3 5 5 3 7.5 3 C9 3 11 4 12 6 C13 4 15 3 16.5 3 C19 3 21 5 21 8 C21 13 16 17 12 21 Z"/>
+  </svg>
+  BeatEm — Privacy-preserving chat
+  <button id="warn_btn" type="button" class="tiny warn" title="What this app does and doesn't promise" aria-expanded="false">W</button>
+</h1>
 
 <!-- ===== Chat ===== -->
-<div id="chat" class="hidden">
+<div id="chat">
   <div class="topbar">
     <div>
       <span id="me_label">me:</span>
       <span class="me-fp" id="me_fp"></span>
-      <button id="copy_my_pk_btn2"  type="button" class="tiny" title="Copy my full public key">Copy pubkey</button>
-      <button id="show_qr_chat_btn" type="button" class="tiny" title="Show my public key as QR">QR</button>
+      <button id="copy_my_pk_btn" type="button" class="tiny" title="Copy my full public key">Copy</button>
+      <button id="show_qr_btn"    type="button" class="tiny" title="Show my public key as QR">QR</button>
+      <button id="regen_btn"      type="button" class="tiny" title="Generate a new keypair (your identity changes)">Regen</button>
     </div>
-    <div class="small" id="info"></div>
-    <button id="disconnect_btn" type="button" class="tiny">Disconnect</button>
+    <div class="small" id="status"></div>
+  </div>
+  <div id="warn_box" class="warn-box hidden">
+    <h3>Server you are trusting</h3>
+    <p class="params" id="warn_server"></p>
+
+    <h3>Negotiated parameters</h3>
+    <p class="params" id="warn_params"></p>
+
+    <h3>What this app protects</h3>
+    <ul>
+      <li>Message content is end-to-end encrypted (libsodium <code>crypto_box</code>: X25519 + XSalsa20 + Poly1305). The server cannot read your messages even if compromised.</li>
+      <li>Constant-cadence broadcast: every client emits a fixed-size packet on a fixed schedule, real or random. A passive on-path observer cannot tell which slot in each broadcast is your real conversation.</li>
+    </ul>
+
+    <h3>What this app does NOT protect against</h3>
+    <ul>
+      <li><b>Untrusted servers.</b> Only connect to a server run by you or someone you trust. BeatEm is open source &mdash; setting up your own server is straightforward (see the project README). A custom server can log every connection, fake any field, and weaken anonymity in ways the client cannot detect.</li>
+      <li><b>Sybil flooding.</b> Anyone can open many WebSocket sessions to the server at near-zero cost. They then know which slots they did not send, narrowing the real conversation. No "client count" indicator can detect this, so this app deliberately does not show one.</li>
+      <li><b>Endpoint compromise.</b> If your browser, device, or extensions are compromised, none of the above helps.</li>
+    </ul>
+
+    <h3>Local data</h3>
+    <p>Your secret key, public key, and peer list are stored in this browser's <code>localStorage</code>. Chat history is in memory only and is lost on reload.</p>
+    <div class="row" style="margin-top: 0.4rem;">
+      <button id="wipe_btn" type="button" class="tiny danger" title="Delete all stored identity and peers from this browser">Wipe local data</button>
+    </div>
   </div>
   <div class="chat-grid">
     <div>
@@ -237,7 +271,7 @@
         <input id="new_peer_label" type="text" placeholder="Label (e.g. Alice)">
       </div>
       <div class="row" style="margin-top: 0.3rem;">
-        <input id="new_peer_pk" type="text" placeholder="Peer public key (hex)">
+        <input id="new_peer_pk" type="text" placeholder="Pubkey">
         <button id="scan_peer_btn" type="button" title="Scan a QR code with the camera">Scan</button>
         <button id="add_peer_btn"  type="button">Add</button>
       </div>
@@ -301,13 +335,14 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-/* Default the server field to the same host that served this page, so
- * the typical flow ("beatem_server serves both the page and the WS")
- * works without any manual entry. The user can still override.
+/* Server URL derived from the page's own origin — beatem_server serves
+ * both the page and the WebSocket on the same port. Falls back to
+ * localhost:27015 for the (unusual) case of opening the file directly.
  */
-const onHttp = (location.protocol === "http:" || location.protocol === "https:");
-document.getElementById("server").value = onHttp ? location.host : "localhost:27015";
-const wsScheme = (location.protocol === "https:") ? "wss" : "ws";
+const wsScheme  = (location.protocol === "https:") ? "wss" : "ws";
+const serverHost = (location.protocol === "http:" || location.protocol === "https:")
+                   ? location.host
+                   : "localhost:27015";
 
 /* ---- Protocol constants (must match include/crypto.h + protocol.h) ---- */
 const NONCE_SIZE     = 24;
@@ -318,10 +353,15 @@ const HANDSHAKE_SIZE = 16;
 const PROTO_MAGIC    = [0x42, 0x45, 0x41, 0x54];  // "BEAT"
 const PROTO_VERSION  = 1;
 const LS_PEERS_KEY   = "beatem.peers";  // localStorage key for peer list
+const LS_SK_KEY      = "beatem.sk";     // localStorage key for secret key (hex)
+const LS_PK_KEY      = "beatem.pk";     // localStorage key for public key (hex)
 
 /* ---- DOM helpers ---- */
 const $ = (id) => document.getElementById(id);
-const setStatus = (cls, txt) => { $("status").className = cls; $("status").textContent = txt; };
+const setStatus = (cls, txt) => {
+  $("status").className = "small " + cls;
+  $("status").textContent = txt;
+};
 const setPeerStatus = (cls, txt) => {
   $("peer_status").className = "small " + cls;
   $("peer_status").textContent = txt;
@@ -626,38 +666,78 @@ function handleBroadcast(buf) {
   }
 }
 
-/* ---- Wiring ---- */
-$("gen_btn").addEventListener("click", () => {
+/* ---- Identity persistence ----
+ * The secret key is held in plain localStorage. Threat model: an XSS
+ * or page-level extension can already exfiltrate live key material
+ * regardless of storage, so wrapping doesn't really raise the floor
+ * here. If you want at-rest protection, the upgrade is passphrase
+ * wrapping (Argon2 KEK + box wrap) or a WebAuthn PRF-derived key.
+ */
+function loadOrGenerateIdentity() {
+  const sk_hex = localStorage.getItem(LS_SK_KEY);
+  const pk_hex = localStorage.getItem(LS_PK_KEY);
+  if (sk_hex && pk_hex) {
+    try {
+      const sk = fromHex(sk_hex);
+      const pk = fromHex(pk_hex);
+      if (sk.length === KEY_SIZE && pk.length === KEY_SIZE) return { sk, pk };
+    } catch (_e) { /* fall through */ }
+  }
   const kp = sodium.crypto_box_keypair();
-  $("my_sk").value = toHex(kp.privateKey);
-  $("my_pk").value = toHex(kp.publicKey);
-  setStatus("ok", "New keypair generated. Share the public key with your peers out-of-band.");
+  localStorage.setItem(LS_SK_KEY, toHex(kp.privateKey));
+  localStorage.setItem(LS_PK_KEY, toHex(kp.publicKey));
+  return { sk: kp.privateKey, pk: kp.publicKey };
+}
+
+function regenIdentity() {
+  if (!confirm("Generate a new keypair?\n\n" +
+               "Your current public key is replaced. Peers will need your new key " +
+               "before they can reach you.")) return;
+  const kp = sodium.crypto_box_keypair();
+  mySK = kp.privateKey;
+  myPK = kp.publicKey;
+  localStorage.setItem(LS_SK_KEY, toHex(mySK));
+  localStorage.setItem(LS_PK_KEY, toHex(myPK));
+  sendCounter = 0;
+  $("me_fp").textContent = fingerprint(toHex(myPK)) + "…";
+  /* Reconnect so the in-flight session uses the new identity. */
+  if (sock && sock.readyState === WebSocket.OPEN) sock.close();
+}
+
+$("regen_btn").addEventListener("click", regenIdentity);
+
+$("warn_btn").addEventListener("click", () => {
+  const hidden = $("warn_box").classList.toggle("hidden");
+  $("warn_btn").setAttribute("aria-expanded", hidden ? "false" : "true");
 });
 
-const copyMyPk = () => {
-  copyToClipboard($("my_pk").value);
+$("wipe_btn").addEventListener("click", () => {
+  if (!confirm("Delete your secret key, public key, and all peers from this browser?\n\n" +
+               "This cannot be undone. Peers will need to be re-added and your new public " +
+               "key shared with them.")) return;
+  localStorage.removeItem(LS_SK_KEY);
+  localStorage.removeItem(LS_PK_KEY);
+  localStorage.removeItem(LS_PEERS_KEY);
+  /* Reload so the startup path generates a fresh identity and the in-
+   * memory state (chat history, replay counters, etc.) is reset. */
+  location.reload();
+});
+
+$("copy_my_pk_btn").addEventListener("click", () => {
+  copyToClipboard(toHex(myPK));
   setStatus("ok", "Public key copied.");
-};
-$("copy_my_pk_btn").addEventListener("click", copyMyPk);
-$("copy_my_pk_btn2").addEventListener("click", copyMyPk);
+});
 
 /* ---- QR display ----
  * Renders my_pk as an SVG QR so the peer can scan it instead of typing
- * 64 hex chars. Useful in the desktop->mobile direction (laptop shows
- * QR, phone scans) and mobile->mobile.
+ * 64 hex chars.
  */
 async function showMyQr() {
-  const pk = $("my_pk").value.trim();
-  if (!pk) {
-    setStatus("error", "Generate or paste a public key first.");
-    return;
-  }
-  const svg = await QRCode.toString(pk, { type: "svg", margin: 1, width: 280 });
+  const svg = await QRCode.toString(toHex(myPK), { type: "svg", margin: 1, width: 280 });
   $("qr_display").innerHTML = svg;
   $("qr_modal").classList.remove("hidden");
 }
-$("show_qr_setup_btn").addEventListener("click", showMyQr);
-$("show_qr_chat_btn").addEventListener("click", showMyQr);
+$("show_qr_btn").addEventListener("click", showMyQr);
 $("qr_close_btn").addEventListener("click", () => $("qr_modal").classList.add("hidden"));
 
 /* ---- QR scanner ----
@@ -699,35 +779,63 @@ function closeScanner() {
 $("scan_peer_btn").addEventListener("click", openScanner);
 $("scan_close_btn").addEventListener("click", closeScanner);
 
-/* Auto-trim hex inputs so stray whitespace from copy/paste/email
+/* Auto-trim the peer pk field so stray whitespace from copy/paste/email
  * doesn't break parsing.
  */
-for (const id of ["my_sk", "my_pk", "new_peer_pk"]) {
-  $(id).addEventListener("change", (e) => { e.target.value = e.target.value.trim(); });
+$("new_peer_pk").addEventListener("change", (e) => {
+  e.target.value = e.target.value.trim();
+});
+
+/* Hydrate peers from localStorage. Skip any entry whose pk matches the
+ * current local identity — a saved "self peer" from a regen-ago session
+ * would otherwise reappear as a chat that can never receive messages.
+ */
+function hydratePeers() {
+  const myPkHex = toHex(myPK).toLowerCase();
+  const stored = loadStoredPeers();
+  peers = [];
+  let droppedSelf = 0;
+  for (const s of stored) {
+    const sHex = (s.pk_hex || "").toLowerCase();
+    if (sHex === myPkHex) { droppedSelf++; continue; }
+    try {
+      const bytes = fromHex(sHex);
+      if (bytes.length !== KEY_SIZE) continue;
+      peers.push({
+        label: s.label,
+        pk_hex: sHex,
+        pk_bytes: bytes,
+        recvCount: 0,
+        log: [],
+        unread: 0,
+      });
+    } catch (_e) { /* skip bad entries */ }
+  }
+  if (droppedSelf > 0) savePeers();  // persist the cleanup
+  activePeer = null;
+  renderPeers();
+  renderLog();
 }
 
-$("connect_btn").addEventListener("click", () => {
-  try {
-    mySK = fromHex($("my_sk").value);
-    myPK = fromHex($("my_pk").value);
-  } catch (e) {
-    setStatus("error", `Invalid hex key: ${e.message}`);
-    return;
-  }
-  if (mySK.length !== KEY_SIZE || myPK.length !== KEY_SIZE) {
-    setStatus("error", `Each key must be ${KEY_SIZE*2} hex chars.`);
-    return;
-  }
+let reconnectTimer = null;
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, 3000);
+}
 
-  const url = wsScheme + "://" + $("server").value;
-  setStatus("", `Connecting to ${url}…`);
+function connect() {
+  const url = wsScheme + "://" + serverHost;
+  setStatus("", "Connecting…");
   sock = new WebSocket(url);
   sock.binaryType = "arraybuffer";
 
   let gotHandshake = false;
 
   sock.addEventListener("open", () => {
-    setStatus("ok", "Connected. Waiting for protocol handshake…");
+    setStatus("ok", `Connected to server: ${serverHost}`);
   });
 
   sock.addEventListener("message", (ev) => {
@@ -745,44 +853,15 @@ $("connect_btn").addEventListener("click", () => {
       textSize     = plainSize - KEY_SIZE - COUNTER_SIZE;
       gotHandshake = true;
 
-      // Switch to chat UI
-      $("setup").classList.add("hidden");
-      $("chat").classList.remove("hidden");
-      $("me_fp").textContent = fingerprint(toHex(myPK)) + "…";
-      $("info").textContent =
-        `${heartbeatMs}ms / ${pktSize}B slots / max ${maxClients} clients · ` +
-        `${textSize}B per message`;
+      const upBps   = Math.round(pktSize * 1000 / heartbeatMs);
+      const downBps = Math.round(pktSize * maxClients * 1000 / heartbeatMs);
+      $("warn_server").textContent = `${serverHost} (${wsScheme}://)`;
+      $("warn_params").textContent =
+        `cadence ${heartbeatMs} ms · slot ${pktSize} B · max ${maxClients} clients · ` +
+        `message budget ${textSize} B · ↑${upBps} B/s · ↓${downBps} B/s`;
+      setStatus("ok", `Connected to server: ${serverHost}`);
 
-      // Hydrate peers from localStorage if any saved. Skip any entry
-      // whose pk matches the current local identity — a saved "self
-      // peer" entry from an earlier session would otherwise reappear
-      // and clutter the list with a chat that can never receive
-      // messages (own packets are dropped by the symmetric-key check).
-      const myPkHex = toHex(myPK).toLowerCase();
-      const stored = loadStoredPeers();
-      peers = [];
-      let droppedSelf = 0;
-      for (const s of stored) {
-        const sHex = (s.pk_hex || "").toLowerCase();
-        if (sHex === myPkHex) { droppedSelf++; continue; }
-        try {
-          const bytes = fromHex(sHex);
-          if (bytes.length !== KEY_SIZE) continue;
-          peers.push({
-            label: s.label,
-            pk_hex: sHex,
-            pk_bytes: bytes,
-            recvCount: 0,
-            log: [],
-            unread: 0,
-          });
-        } catch (_e) { /* skip bad entries */ }
-      }
-      if (droppedSelf > 0) savePeers();  // persist the cleanup
-      renderPeers();
-      renderLog();
-
-      // Start constant-cadence transmitter.
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = setInterval(tick, heartbeatMs);
       return;
     }
@@ -790,20 +869,15 @@ $("connect_btn").addEventListener("click", () => {
   });
 
   sock.addEventListener("close", () => {
-    setStatus("error", "Disconnected.");
     if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
-    $("setup").classList.remove("hidden");
-    $("chat").classList.add("hidden");
+    setStatus("error", "Disconnected. Reconnecting…");
+    scheduleReconnect();
   });
 
   sock.addEventListener("error", () => {
-    setStatus("error", "WebSocket error (is beatem_server listening on this port?).");
+    setStatus("error", "WebSocket error.");
   });
-});
-
-$("disconnect_btn").addEventListener("click", () => {
-  if (sock) sock.close();
-});
+}
 
 $("add_peer_btn").addEventListener("click", () => {
   const pk = $("new_peer_pk").value.trim();
@@ -833,6 +907,31 @@ $("send_btn").addEventListener("click", () => {
 $("msg").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); $("send_btn").click(); }
 });
+
+/* On mobile the virtual keyboard pops up and the message input ends up
+ * behind it. The viewport meta with interactive-widget=resizes-content
+ * handles this in modern browsers; this focus handler is a fallback
+ * for older ones — the timeout lets the keyboard finish animating in
+ * before we scroll. */
+$("msg").addEventListener("focus", () => {
+  setTimeout(() => {
+    $("msg").scrollIntoView({ block: "end", behavior: "smooth" });
+  }, 250);
+});
+
+/* ---- Startup ----
+ * Identity comes from localStorage (or is freshly generated and saved
+ * the first time). Then hydrate peers and open the WebSocket. The page
+ * has no "setup" screen — the user lands directly in the chat.
+ */
+{
+  const id = loadOrGenerateIdentity();
+  mySK = id.sk;
+  myPK = id.pk;
+  $("me_fp").textContent = fingerprint(toHex(myPK)) + "…";
+  hydratePeers();
+  connect();
+}
 </script>
 </body>
 </html>

@@ -19,6 +19,20 @@ Poly1305) with monotonic replay-counter protection. The server cannot
 read your messages — and cannot tell which slots in its own broadcast
 are real.
 
+## Motivation
+
+BeatEm exists to defend
+[Article 12 of the UN Universal Declaration of Human Rights](https://www.un.org/en/about-us/universal-declaration-of-human-rights):
+
+> No one shall be subjected to arbitrary interference with his privacy,
+> family, home or correspondence, nor to attacks upon his honour and
+> reputation. Everyone has the right to the protection of the law
+> against such interference or attacks.
+
+Encrypted message content protects *correspondence*. Hiding the
+communication graph protects *privacy* — who you talk to, when, and
+how often, which often reveals more than the messages.
+
 ## Quickstart
 
 ```sh
@@ -84,20 +98,6 @@ there are real limits:
 
 For deeper anonymity (hide the fact that you're a BeatEm user at all),
 run the server as a Tor hidden service.
-
-## Motivation
-
-BeatEm exists to defend
-[Article 12 of the UN Universal Declaration of Human Rights](https://www.un.org/en/about-us/universal-declaration-of-human-rights):
-
-> No one shall be subjected to arbitrary interference with his privacy,
-> family, home or correspondence, nor to attacks upon his honour and
-> reputation. Everyone has the right to the protection of the law
-> against such interference or attacks.
-
-Encrypted message content protects *correspondence*. Hiding the
-communication graph protects *privacy* — who you talk to, when, and
-how often, which often reveals more than the messages.
 
 ## Project layout
 

@@ -1,0 +1,10 @@
+# Example BeatEm server config.
+# Copy to beatem_server.conf and pass with --config beatem_server.conf
+#
+# Keys match the long-option names. Lines starting with '#' are comments.
+# CLI flags passed after --config still override these values.
+
+heartbeat-ms = 2000
+packet-size  = 128
+max-clients  = 16
+port         = 27015

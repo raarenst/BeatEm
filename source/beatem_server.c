@@ -5,6 +5,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <errno.h>
+#include <ctype.h>
 #include <getopt.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -305,11 +306,19 @@ static void usage(const char *prog) {
   printf(
     "Usage: %s [options]\n"
     "\n"
-    "  --heartbeat-ms <ms>   flush cadence in milliseconds (default %u, range %u..%u)\n"
-    "  --packet-size  <B>    bytes per client slot on the wire (default %u, range %u..%u)\n"
-    "  --max-clients  <N>    maximum simultaneous clients (default %u, range %u..%u)\n"
-    "  --port         <p>    TCP port (default %u)\n"
-    "  --help                show this message and exit\n"
+    "  --config       <path>  read options from a key=value config file\n"
+    "  --heartbeat-ms <ms>    flush cadence in milliseconds (default %u, range %u..%u)\n"
+    "  --packet-size  <B>     bytes per client slot on the wire (default %u, range %u..%u)\n"
+    "  --max-clients  <N>     maximum simultaneous clients (default %u, range %u..%u)\n"
+    "  --port         <p>     TCP port (default %u)\n"
+    "  --help                 show this message and exit\n"
+    "\n"
+    "Config-file format (one key=value per line, '#' for comments):\n"
+    "  heartbeat-ms = 2000\n"
+    "  packet-size  = 128\n"
+    "  max-clients  = 16\n"
+    "  port         = 27015\n"
+    "Keys match the long-option names. CLI flags override the file.\n"
     "\n"
     "Note: the heartbeat is internally rounded down to whole seconds for the\n"
     "wall-clock flush check (so 1500 -> 1 s, 2500 -> 2 s). Sub-second is honored\n"
@@ -321,8 +330,72 @@ static void usage(const char *prog) {
     DEFAULT_SERVER_PORT);
 }
 
+/* Apply one key=value pair to the runtime config. Returns -1 if the
+ * key is unrecognized. Range validation is deferred until parse_args
+ * has applied both file and CLI values.
+ */
+static int apply_config_key(const char *key, const char *value, const char *src) {
+  if      (strcmp(key, "heartbeat-ms") == 0) g_heartbeat_ms       = (uint32_t)strtoul(value, NULL, 10);
+  else if (strcmp(key, "packet-size")  == 0) g_client_packet_size = (uint32_t)strtoul(value, NULL, 10);
+  else if (strcmp(key, "max-clients")  == 0) g_max_clients        = (uint32_t)strtoul(value, NULL, 10);
+  else if (strcmp(key, "port")         == 0) g_port               = (uint16_t)strtoul(value, NULL, 10);
+  else {
+    printf("Unknown key '%s' in %s\n", key, src);
+    return -1;
+  }
+  return 0;
+}
+
+static char *trim(char *s) {
+  while (*s && isspace((unsigned char)*s)) s++;
+  char *end = s + strlen(s);
+  while (end > s && isspace((unsigned char)end[-1])) *--end = '\0';
+  return s;
+}
+
+static int load_config_file(const char *path) {
+  FILE *f = fopen(path, "r");
+  if (!f) {
+    printf("Could not open config file %s: %s\n", path, strerror(errno));
+    return -1;
+  }
+  char line[256];
+  int lineno = 0;
+  int rc = 0;
+  while (fgets(line, sizeof(line), f)) {
+    lineno++;
+    char *p = trim(line);
+    if (*p == '\0' || *p == '#') continue;  /* blank or comment */
+    char *eq = strchr(p, '=');
+    if (!eq) {
+      printf("Malformed line %d in %s (expected key=value)\n", lineno, path);
+      rc = -1; break;
+    }
+    *eq = '\0';
+    char *key = trim(p);
+    char *val = trim(eq + 1);
+    char src[300];
+    snprintf(src, sizeof(src), "%s line %d", path, lineno);
+    if (apply_config_key(key, val, src) != 0) { rc = -1; break; }
+  }
+  fclose(f);
+  return rc;
+}
+
 static int parse_args(int argc, char **argv) {
+  /* First pass: handle --config so the file is loaded before CLI flags
+   * override anything. We scan argv directly to keep this independent
+   * of getopt_long's positional ordering. */
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+      if (load_config_file(argv[++i]) != 0) return -1;
+    } else if (strncmp(argv[i], "--config=", 9) == 0) {
+      if (load_config_file(argv[i] + 9) != 0) return -1;
+    }
+  }
+
   static struct option longopts[] = {
+    {"config",       required_argument, NULL, 'C'},
     {"heartbeat-ms", required_argument, NULL, 'b'},
     {"packet-size",  required_argument, NULL, 'p'},
     {"max-clients",  required_argument, NULL, 'c'},
@@ -331,12 +404,13 @@ static int parse_args(int argc, char **argv) {
     {0, 0, 0, 0}
   };
   int opt;
-  while ((opt = getopt_long(argc, argv, "b:p:c:P:h", longopts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "b:p:c:P:C:h", longopts, NULL)) != -1) {
     switch (opt) {
-      case 'b': g_heartbeat_ms       = (uint32_t)strtoul(optarg, NULL, 10); break;
-      case 'p': g_client_packet_size = (uint32_t)strtoul(optarg, NULL, 10); break;
-      case 'c': g_max_clients        = (uint32_t)strtoul(optarg, NULL, 10); break;
-      case 'P': g_port               = (uint16_t)strtoul(optarg, NULL, 10); break;
+      case 'C':                                                                       break;  /* handled in first pass */
+      case 'b': g_heartbeat_ms       = (uint32_t)strtoul(optarg, NULL, 10);           break;
+      case 'p': g_client_packet_size = (uint32_t)strtoul(optarg, NULL, 10);           break;
+      case 'c': g_max_clients        = (uint32_t)strtoul(optarg, NULL, 10);           break;
+      case 'P': g_port               = (uint16_t)strtoul(optarg, NULL, 10);           break;
       case 'h': usage(argv[0]); return 1;
       default:  usage(argv[0]); return -1;
     }
